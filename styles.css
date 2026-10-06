@@ -126,6 +126,34 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
 .opt .t { font-weight: 600; }
 .opt .d { font-size: 13px; color: var(--fg-dim); margin-top: 2px; }
 
+/* ---------- блок параметров теста ---------- */
+.params {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  padding: 16px 18px 6px;
+  margin: 14px 0;
+}
+.params label { margin-top: 18px; }
+.params label:first-of-type { margin-top: 2px; }
+.params .row { margin: 16px 0 12px; }
+
+/* Подсказки под ползунками: что нажать и почему */
+.hint {
+  margin: 8px 0 4px;
+  padding: 9px 12px;
+  border-left: 3px solid var(--line);
+  border-radius: 0 8px 8px 0;
+  background: #11161d;
+  color: var(--fg-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.hint b { color: var(--fg); }
+.hint.ok { border-left-color: var(--good); }
+.hint.up { border-left-color: var(--accent); }
+.hint.down { border-left-color: var(--warn); }
+
 /* ---------- таблицы ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--line); }

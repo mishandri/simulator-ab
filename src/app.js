@@ -26,6 +26,10 @@ const STEPS = ['Гипотеза', 'Метрика', 'Дизайн', 'Наблю
 const POWER_TARGET = 0.8;
 /** Минимальный срок теста: нужно перекрыть полную неделю из-за цикличности трафика. */
 const MIN_DAYS = 7;
+/** Значения по умолчанию — их же восстанавливает кнопка сброса. */
+const DEFAULT_MDE = 0.05;
+const DEFAULT_SHARE = 0.5;
+const DEFAULT_ALPHA = 0.05;
 const REVEAL_MS = 260;
 const PEEK_DAY = 7; // на какой день «менеджер прибегает с вопросом»
 
@@ -162,15 +166,21 @@ function design() {
 
   // Что действительно наберётся за срок симуляции
   const actualSample = bottleneck * scenario.durationDays;
+  // Тот же объём, но при честном 50/50 — с этим сравниваем текущую долю
+  const sampleAtHalf = Math.round(scenario.trafficPerDay * 0.5 * scenario.durationDays);
+  // Крупнейший MDE, который тест надёжно различает (мощность ровно 80%)
+  const mdeAchievable = mdeForProportion(baseline, actualSample, POWER_TARGET, state.alpha);
 
   return {
     baseline,
     trueMde,
     perVariant,
+    bottleneck,
     need,
     daysForSample,
     days,
     actualSample,
+    sampleAtHalf,
     // Мощность на заявленном MDE при реально набранном объёме
     powerAtChosen: powerForProportion(baseline, state.mde, actualSample, state.alpha),
     // Мощность на типичном эффекте при реально набранном объёме — вот это и важно
@@ -333,29 +343,112 @@ function wireMetric() {
 
 // ============================================================ шаг 2: дизайн
 
+/**
+ * Подсказка под ползунком MDE: куда двигать и почему.
+ * Ориентир — не «правильный ответ», а калибровка теста: крупнейший эффект,
+ * который этот объём данных различает с мощностью 80%.
+ */
+function mdeHint(d) {
+  const recommended = d.mdeAchievable;
+  const gap = Math.abs(state.mde - recommended) / recommended;
+
+  if (gap <= 0.15) {
+    return `<div class="hint ok"><b>✓ Откалибровано.</b> Ваш MDE примерно совпадает с тем, что тест
+      надёжно различает при мощности ${pct(POWER_TARGET, 0)} — это ${pct(recommended, 1)}.
+      Двигать ползунок дальше не нужно.</div>`;
+  }
+
+  if (state.mde < recommended) {
+    return `<div class="hint up"><b>↑ Увеличьте до ≈${pct(recommended, 1)}.</b>
+      Сейчас под MDE ${pct(state.mde, 1)} нужно ${num(d.need)} наблюдений на вариант, а за
+      ${days(d.scenario.durationDays)} наберётся ${num(d.actualSample)} — данных в
+      ${(d.need / d.actualSample).toFixed(1)} раза меньше, чем нужно. Мощность на ваш порог —
+      ${pct(d.powerAtChosen, 0)}: такой тест чаще покажет «разницы нет», чем подтвердит эффект.
+      Либо увеличьте срок/трафик, но в симуляторе они заданы.</div>`;
+  }
+
+  return `<div class="hint down"><b>↓ Уменьшите до ≈${pct(recommended, 1)}.</b>
+    Порог ${pct(state.mde, 1)} выше, чем тест надёжно различает при 80% мощности
+    (${pct(recommended, 1)}). Данных с запасом: мощность на ваш порог —
+    ${pct(d.powerAtChosen, 0)}. Объявлять планку выше разрешающей способности собственного теста
+    бессмысленно — на реальных, но небольших улучшениях вы всё равно закроете изменение.
+    Если вас осознанно интересуют только крупные эффекты — оставьте как есть, это ваш бизнес-выбор,
+    но тогда не ждите от теста ответов про мелочь.</div>`;
+}
+
+/** Подсказка под ползунком доли трафика. */
+function shareHint(d) {
+  if (state.shareB >= 0.5) {
+    return `<div class="hint ok"><b>✓ 50/50 — стандарт.</b> Оба варианта получают максимум данных,
+      срок теста минимален, мощность максимальна. Отступать от 50/50 стоит только ради
+      безопасности: если вариант B что-то сломает, вы не заметите этого на половине трафика.</div>`;
+  }
+  return `<div class="hint up"><b>↑ Увеличьте до 50%.</b> На B приходится ${pct(state.shareB, 0)} трафика:
+    за ${days(d.scenario.durationDays)} он наберёт ${num(d.actualSample)} наблюдений вместо
+    ${num(d.sampleAtHalf)} при 50/50. Данных в ${(d.sampleAtHalf / d.actualSample).toFixed(1)} раза
+    меньше, а тест придётся держать примерно во столько же раз дольше.</div>`;
+}
+
+/** Подсказка под выбором α. */
+function alphaHint(d) {
+  const base = sampleSizeProportion(d.baseline, state.mde, POWER_TARGET, 0.05);
+  if (state.alpha === 0.05) {
+    return `<div class="hint ok"><b>✓ 0.05 — отраслевой стандарт.</b> Примерно каждый 20-й
+      «выигранный» тест оказывается ложным. Ниже — про настройку этого параметра под удобство.</div>`;
+  }
+  if (state.alpha < 0.05) {
+    const stricter = sampleSizeProportion(d.baseline, state.mde, POWER_TARGET, 0.01);
+    return `<div class="hint up"><b>Строже — честнее, но дороже.</b> При α = ${state.alpha} объём
+      выборки растёт примерно в ${(stricter / base).toFixed(2)} раза против α = 0.05, а при 0.01
+      ложных побед почти нет. Разумно, если вы открываете результат широкой аудитории
+      и цена ошибки высока.</div>`;
+  }
+  return `<div class="hint down"><b>↓ Это не бесплатно.</b> При α = ${state.alpha} каждый
+    ${Math.round(1 / state.alpha)}-й «победитель» — шум. Вы будете выкатывать изменения, которые
+    не работают, и называть это победой.</div>`;
+}
+
 function screenDesign() {
   const scenario = getScenario(state.scenarioId);
   const d = design();
   const mdePercent = (state.mde * 100).toFixed(1);
   const sharePercent = (state.shareB * 100).toFixed(0);
+  const isDefault =
+    state.mde === DEFAULT_MDE && state.shareB === DEFAULT_SHARE && state.alpha === DEFAULT_ALPHA;
 
   return `
     <div class="card">
       <h2>Шаг 3. Дизайн теста</h2>
-      <p class="lead">Сколько данных нужно, чтобы поймать нужный эффект, и сколько это займёт по времени.</p>
+      <p class="lead">Сколько данных нужно, чтобы поймать нужный эффект, и сколько это займёт по времени.
+      Подсказки под ползунками подсказывают направление — но итоговое решение остаётся за вами.</p>
 
-      <label>MDE — минимальный эффект, ради которого стоит запускать тест: <b id="mdeLabel">${mdePercent}%</b></label>
-      <input type="range" id="mde" min="0.5" max="30" step="0.5" value="${mdePercent}">
+      <div class="params">
+        <label>MDE — минимальный эффект, ради которого стоит запускать тест: <b id="mdeLabel">${mdePercent}%</b></label>
+        <input type="range" id="mde" min="0.5" max="30" step="0.5" value="${mdePercent}">
+        <div id="mdeHint">${mdeHint(d)}</div>
 
-      <label>Доля трафика на вариант B: <b id="shareLabel">${sharePercent}%</b> (A получит ${100 - Number(sharePercent)}%)</label>
-      <input type="range" id="share" min="10" max="50" step="5" value="${sharePercent}">
+        <label>Доля трафика на вариант B: <b id="shareLabel">${sharePercent}%</b> (A получит ${100 - Number(sharePercent)}%)</label>
+        <input type="range" id="share" min="10" max="50" step="5" value="${sharePercent}">
+        <div id="shareHint">${shareHint(d)}</div>
 
-      <label>Уровень значимости α</label>
-      <select id="alpha">
-        <option value="0.05" ${state.alpha === 0.05 ? 'selected' : ''}>0.05 — стандарт</option>
-        <option value="0.01" ${state.alpha === 0.01 ? 'selected' : ''}>0.01 — строже, нужно больше данных</option>
-        <option value="0.1" ${state.alpha === 0.1 ? 'selected' : ''}>0.10 — нестрого, много ложных побед</option>
-      </select>
+        <label>Уровень значимости α</label>
+        <select id="alpha">
+          <option value="0.05" ${state.alpha === 0.05 ? 'selected' : ''}>0.05 — стандарт</option>
+          <option value="0.01" ${state.alpha === 0.01 ? 'selected' : ''}>0.01 — строже, нужно больше данных</option>
+          <option value="0.1" ${state.alpha === 0.1 ? 'selected' : ''}>0.10 — нестрого, много ложных побед</option>
+        </select>
+        <div id="alphaHint">${alphaHint(d)}</div>
+
+        <div class="row">
+          <button id="reset" ${isDefault ? 'disabled' : ''}>Сбросить параметры</button>
+          <span class="muted" style="font-size:13px;align-self:center">вернёт MDE ${pct(
+    DEFAULT_MDE,
+    0
+  )}, трафик ${pct(DEFAULT_SHARE, 0)} и α ${DEFAULT_ALPHA}</span>
+        </div>
+      </div>
+
+      <div id="design-msg">${designWarnings()}</div>
 
       <h3>Расчёт</h3>
       <table>
@@ -388,8 +481,7 @@ function screenDesign() {
       </table>
       <div id="design-msg"></div>
       <div class="row">
-        <button class="primary" id="run">Запустить тест на ${scenario.durationDays} дней →</button>
-        <button id="reset">Сбросить</button>
+        <button class="primary" id="run">Запустить тест на ${days(scenario.durationDays)} →</button>
       </div>
     </div>`;
 }
@@ -424,6 +516,7 @@ function designWarnings() {
   }
 
   if (d.powerOnTrue < POWER_TARGET) {
+    const caught = Math.round(d.powerOnTrue * 100);
     const missPct = Math.round((1 - d.powerOnTrue) * 100);
     out.push(
       `<div class="note bad"><b>Данных не хватит для типичного эффекта.</b> За ${days(
@@ -431,23 +524,14 @@ function designWarnings() {
       )} на вариант наберётся ${num(d.actualSample)} наблюдений. Эффект ${pct(
         trueMde,
         1
-      )} этот тест поймает лишь примерно в ${Math.round(
-        d.powerOnTrue * 100
-      )} случаях из 100 — в остальных ${missPct} вы увидите «разницы нет» и решите, что
-      изменения не работает. Надёжно отличить от нуля можно только эффект от ${pct(
-        d.mdeAchievable,
-        1
-      )}.
+      )} этот тест поймает примерно в ${caught} ${plural(caught, [
+        'случае',
+        'случаях',
+        'случаях',
+      ])} из 100 — в остальных ${missPct} вы увидите «разницы нет» и решите, что изменение
+      не работает. Надёжно отличить от нуля можно только эффект от ${pct(d.mdeAchievable, 1)}.
       Решения: продлить срок, увеличить долю трафика на B или признать, что такой эффект
       вы принципиально не измерите.</div>`
-    );
-  }
-
-  if (state.shareB < 0.5) {
-    out.push(
-      `<div class="note">Доля B = ${pct(state.shareB, 0)}. Это законно, но вариант B копит данные
-      в ${(0.5 / state.shareB).toFixed(1)} раза медленнее: за ${days(d.scenario.durationDays)}
-      он наберёт ${num(d.actualSample)} наблюдений вместо необходимых ${num(d.need)}.</div>`
     );
   }
 
@@ -475,6 +559,7 @@ function designWarnings() {
 }
 
 function wireDesign() {
+  // Перерисовка целиком: подсказки, расчёт и выводы зависят от всех трёх параметров
   const upd = () => {
     state.mde = Number($('#mde').value) / 100;
     state.shareB = Number($('#share').value) / 100;
@@ -488,13 +573,13 @@ function wireDesign() {
     state.alpha = Number(e.target.value);
     renderStep();
   };
+  // Единый сброс всех параметров теста
   $('#reset').onclick = () => {
-    state.mde = 0.05;
-    state.shareB = 0.5;
-    state.alpha = 0.05;
+    state.mde = DEFAULT_MDE;
+    state.shareB = DEFAULT_SHARE;
+    state.alpha = DEFAULT_ALPHA;
     renderStep();
   };
-  $('#design-msg').innerHTML = designWarnings();
   $('#run').onclick = () => startExperiment();
 }
 
@@ -1166,9 +1251,9 @@ function startScenario(id) {
   state.step = 0;
   state.hypothesis = '';
   state.primary = null;
-  state.mde = 0.05;
-  state.shareB = 0.5;
-  state.alpha = 0.05;
+  state.mde = DEFAULT_MDE;
+  state.shareB = DEFAULT_SHARE;
+  state.alpha = DEFAULT_ALPHA;
   state.sim = null;
   state.revealed = 0;
   state.speed = REVEAL_MS;
