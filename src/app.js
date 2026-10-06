@@ -165,6 +165,7 @@ function afterRender() {
   if (state.step === 2) wireDesign();
   if (state.step === 3) wireObserve();
   if (state.step === 4) wireDecision();
+  if (state.step === 5) wireDebrief();
 }
 
 // ============================================================ шаг 0: гипотеза
@@ -737,6 +738,13 @@ function wireDecision() {
   });
 }
 
+function wireDebrief() {
+  const restart = $('#restart');
+  if (restart) restart.onclick = () => startScenario(state.scenarioId);
+  const other = $('#other');
+  if (other) other.onclick = () => showHome();
+}
+
 // ============================================================ шаг 5: разбор
 
 function screenDebrief() {
@@ -1052,6 +1060,26 @@ function loadProgress() {
   }
 }
 
+/** Начинает сценарий с чистого листа: тот же seed — те же данные. */
+function startScenario(id) {
+  stopTimer();
+  state.scenarioId = id;
+  state.step = 0;
+  state.hypothesis = '';
+  state.primary = null;
+  state.mde = 0.05;
+  state.shareB = 0.5;
+  state.alpha = 0.05;
+  state.sim = null;
+  state.revealed = 0;
+  state.speed = REVEAL_MS;
+  state.peekOffered = false;
+  state.stoppedAt = null;
+  state.earlySnap = null;
+  state.decision = null;
+  render();
+}
+
 function showHome() {
   stopTimer();
   state.step = 0;
@@ -1064,19 +1092,7 @@ function showHome() {
 
   app.innerHTML = `<div id="screen">${screenHome()}</div>`;
   app.querySelectorAll('.sc').forEach((el) => {
-    el.onclick = () => {
-      state.scenarioId = el.dataset.id;
-      state.step = 0;
-      state.hypothesis = '';
-      state.primary = null;
-      state.mde = 0.05;
-      state.shareB = 0.5;
-      state.alpha = 0.05;
-      state.stoppedAt = null;
-      state.decision = null;
-      state.speed = REVEAL_MS;
-      render();
-    };
+    el.onclick = () => startScenario(el.dataset.id);
   });
 }
 
