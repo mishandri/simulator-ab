@@ -124,6 +124,16 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
 .opt.sel { border-color: var(--accent); background: #12243a; }
 .opt input { margin-top: 3px; accent-color: var(--accent); }
 .opt .t { font-weight: 600; }
+/* Метрика, занятая под гвардрайл: её нельзя взять основной */
+.opt.guard { border-style: dashed; }
+.opt.guard .t { color: var(--fg-dim); }
+.tag.guard {
+  border-color: var(--warn);
+  color: var(--warn);
+  margin-left: 8px;
+  font-size: 11px;
+  vertical-align: 1px;
+}
 .opt .d { font-size: 13px; color: var(--fg-dim); margin-top: 2px; }
 
 /* ---------- блок параметров теста ---------- */
@@ -153,6 +163,29 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
 .hint.ok { border-left-color: var(--good); }
 .hint.up { border-left-color: var(--accent); }
 .hint.down { border-left-color: var(--warn); }
+
+/* ---------- пара гипотез H0 / H1 ---------- */
+.hypo-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+.hypo {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 0 8px 8px 0;
+  background: var(--bg-3);
+  padding: 12px 14px;
+}
+.hypo.h0 { border-left-color: var(--fg-faint); }
+.hypo.h1 { border-left-color: var(--accent); }
+.hypo p { margin: 8px 0 6px; color: var(--fg); font-size: 14px; }
+.hypo .b { font-size: 13px; color: var(--fg-dim); }
+
+@media (max-width: 640px) {
+  .hypo-pair { grid-template-columns: 1fr; }
+}
 
 /* ---------- таблицы ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

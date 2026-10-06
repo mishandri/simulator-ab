@@ -19,7 +19,6 @@ import {
   durationDays,
   formatP,
   formatPExpr,
-  interpretP,
 } from './stats.js';
 
 const STEPS = ['Гипотеза', 'Метрика', 'Дизайн', 'Наблюдение', 'Решение', 'Разбор'];
@@ -57,6 +56,8 @@ const DEFAULT_MDE = 0.1;
 const DEFAULT_SHARE = 0.5;
 const DEFAULT_ALPHA = 0.05;
 const DEFAULT_DAYS = 21;
+/** Метрики-кандидаты на роль гвардрайла, если сценарные не подходят. */
+const DEFAULT_GUARDRAILS = ['arpu', 'conversion'];
 const REVEAL_MS = 260;
 
 /**
@@ -164,7 +165,11 @@ function primaryResult(scenario, snap) {
  * на зафиксированное правило, а не на интуицию.
  */
 function guardrailCheck(scenario, snap) {
-  const id = scenario.guardrails[0] ?? 'arpu';
+  // Гвардрайл не может совпадать с основной метрикой: гвардрайл ограничивает вред,
+  // а решение принимается по основной. Иначе правило превращается в абсурд
+  // «основная метрика выросла, но нельзя выкатывать, потому что выросла».
+  const candidates = [...scenario.guardrails, ...DEFAULT_GUARDRAILS];
+  const id = candidates.find((m) => m !== state.primary) ?? 'conversion';
   const res = metricResult(id, snap);
   return {
     id,
@@ -172,6 +177,164 @@ function guardrailCheck(scenario, snap) {
     broken: res.significant && res.relLift <= -GUARDRAIL_DROP,
     warning: !res.significant && res.relLift <= -GUARDRAIL_DROP,
   };
+}
+
+/**
+ * Однозначная формулировка вывода по p-value.
+ *
+ * Прежняя формулировка «маловероятно из-за шума» читалась двояко: при
+ * p = 0.02 значимость есть, но фраза звучит как «скорее шум».
+ */
+function verdictText(res, alpha = state.alpha) {
+  if (res.significant) {
+    return `статистически значимо (p ${formatPExpr(
+      res.pValue
+    )} < α = ${alpha}): наблюдаемое изменение скорее реальное, чем шум`;
+  }
+  return `не значимо (p ${formatPExpr(res.pValue)} > α = ${alpha}): на этих данных отличить
+    эффект от шума нельзя. Это «не хватило данных», а не «эффекта нет»`;
+}
+
+/**
+ * Проверка выбора основной метрики. Возвращает описание проблемы или null.
+ *
+ * Основная метрика — та, по которой выносится решение о выкатке. Поэтому:
+ *  - ею не может быть гвардрейл (гвардрейл ограничивает вред, а решение принимают
+ *    по основной; иначе правило звучит абсурдно);
+ *  - ею не может быть прокси-метрика (движется по своим причинам).
+ */
+function metricProblem(scenario) {
+  const id = state.primary;
+  if (!id) return null;
+  const label = escapeHtml(METRICS[id].label);
+
+  if (scenario.guardrails.includes(id)) {
+    return {
+      title: `Данная метрика является гвардрейл — её нельзя было выбирать в качестве основной`,
+      body: `«${label}» у этого продукта стоит под защитой: она нужна, чтобы поймать вред, а не
+        чтобы рапортовать об успехе. Выбирая её основной, вы получили правило, которое читается
+        абсурдно: «основная метрика выросла, но выкатывать нельзя, потому что выросло то, что
+        и так должно было расти». Следовало взять ту, что показывает цену изменения.`,
+    };
+  }
+
+  if (!scenario.goodPrimary.includes(id)) {
+    const proper = scenario.goodPrimary.map((g) => `«${escapeHtml(METRICS[g].label)}»`).join(', ');
+    const one = scenario.goodPrimary.length === 1;
+    return {
+      title: `«${label}» — прокси-метрика, по ней нельзя выносить решение о выкатке`,
+      body: `Она двигается по своим причинам и может расти вместе с падением бизнеса. Следовало
+        смотреть на ${proper} — ${
+        one ? 'она показывает, приносит ли изменение' : 'они показывают, приносят ли изменения'
+      } деньги или только активность.`,
+    };
+  }
+
+  return null;
+}
+
+/** Блок ошибки выбора метрики с возвратом на шаг 2. */
+function metricProblemHtml(scenario) {
+  const problem = metricProblem(scenario);
+  if (!problem) return '';
+  return `<div class="note bad">
+      <b>${problem.title}.</b>
+      <div style="margin-top:6px">${problem.body}</div>
+      <div class="row">
+        <button class="primary" id="back-metric">Вернуться к шагу 2. Метрика</button>
+      </div>
+    </div>`;
+}
+
+/** Возврат к шагу выбора метрики: прогон сбрасывается, параметры дизайна сохраняются. */
+function backToMetric() {
+  stopTimer();
+  state.primary = null;
+  state.sim = null;
+  state.revealed = 0;
+  state.speed = REVEAL_MS;
+  state.peekOffered = false;
+  state.stoppedAt = null;
+  state.earlySnap = null;
+  state.beforeExtend = null;
+  state.extendedDays = 0;
+  state.decision = null;
+  state.step = 1;
+  render();
+}
+
+/** Ожидаемое направление эффекта — из текста продуктовой гипотезы. */
+function hypothesisDirection() {
+  const t = (state.hypothesis || '').toLowerCase();
+  const worse = /снизит|упад|уменьш|сократ|потеря|дешев|хуже|разочар/.test(t);
+  const better = /выраст|повыс|увелич|улучш|рост|сократ(ится )?конкуренц/.test(t);
+  if (worse && !better) return 'в сторону ухудшения';
+  return 'в сторону улучшения';
+}
+
+/**
+ * Пара гипотез для проверки.
+ *
+ * H0 — нулевая: эффекта нет. Её не нужно формулировать, она подразумевается:
+ * «ничего не изменилось». Проверка состоит в том, чтобы H0 отвергнуть.
+ * H1 — альтернативная: метрика отличается в ожидаемую сторону. Именно её ученик
+ * пишет в тексте гипотезы.
+ */
+function hypothesisPair(scenario, metricId = null) {
+  const direction = hypothesisDirection();
+  if (metricId) {
+    const metric = METRICS[metricId].label;
+    return {
+      h0: `${metric} в варианте B не отличается от варианта A (либо отличается не более чем на ±${pct(
+        state.mde,
+        1
+      )} — это и есть объявленный MDE)`,
+      h1: `${metric} в варианте B отличается от варианта A, ${direction}`,
+    };
+  }
+  return {
+    h0: 'Различия между вариантами A и B по основной метрике нет (или оно не превышает объявленного MDE)',
+    h1: `Различие есть: основная метрика в варианте B отличается от A, ${direction}`,
+  };
+}
+
+/** Панель H0/H1: текст на шаге гипотезы и вывод на шаге решения. */
+function hypothesisPanel(scenario, snap = null) {
+  const pair = hypothesisPair(scenario, snap ? state.primary : null);
+
+  if (!snap) {
+    return `
+      <h3>Какую гипотезу вы пишете</h3>
+      <div class="hypo-pair">
+        <div class="hypo h0">
+          <span class="tag">H0 — нулевая</span>
+          <p>${pair.h0}</p>
+          <div class="b">Её формулировать не нужно: она подразумевается по умолчанию.
+          Весь смысл эксперимента — получить данные, чтобы её отвергнуть.</div>
+        </div>
+        <div class="hypo h1">
+          <span class="tag">H1 — альтернативная</span>
+          <p>${pair.h1}</p>
+          <div class="b">Именно её вы пишете в тексте ниже: что меняем, для кого, какую метрику
+          смотрим и в какую сторону ждём эффект. Если <code>H0</code> не отвергли — значит,
+          данных не хватило, а не «изменений нет».</div>
+        </div>
+      </div>`;
+  }
+
+  const res = primaryResult(scenario, snap);
+  const verdict = res.significant
+    ? `<span class="pos">Данные позволяют отвергнуть H0</span> (p ${formatPExpr(res.pValue)} &lt; α = ${state.alpha}).`
+    : `<span class="neg">Отвергнуть H0 нельзя</span> (p ${formatPExpr(
+        res.pValue
+      )} &gt; α = ${state.alpha}). Это не подтверждение нулевой гипотезы, а недостаток данных.`;
+  return `
+    <h3>Проверяемые гипотезы</h3>
+    <div class="hypo-pair">
+      <div class="hypo h0"><span class="tag">H0 — нулевая</span><p>${pair.h0}</p></div>
+      <div class="hypo h1"><span class="tag">H1 — альтернативная</span><p>${pair.h1}</p></div>
+    </div>
+    <div class="note ${res.significant ? 'good' : 'warn'}"><b>Вывод по H0:</b> ${verdict}</div>`;
 }
 
 // ============================================================ расчёт дизайна
@@ -313,6 +476,7 @@ function screenHypothesis() {
       </div>
 
       <label for="hyp">Ваша формулировка гипотезы</label>
+      ${hypothesisPanel(scenario)}
       <textarea id="hyp" placeholder="Если мы ..., то ..., потому что ...">${escapeHtml(state.hypothesis)}</textarea>
       <div class="row">
         <button class="primary" id="next1">Выбрать метрику →</button>
@@ -366,6 +530,9 @@ function wireHypothesis() {
 
 function screenMetric() {
   const scenario = getScenario(state.scenarioId);
+  // Гвардрейлы намеренно не раскрываем: какие метрики команда держит под защитой,
+  // решающий узнаёт при согласовании дизайна. Ошибку в выборе разбираем позже —
+  // на шаге решения, вместе с возможностью вернуться и исправить.
   const opts = Object.values(METRICS)
     .map(
       (m) => `
@@ -383,7 +550,7 @@ function screenMetric() {
     <div class="card">
       <h2>Шаг 2. Метрика</h2>
       <p class="lead">Выберите <b>основную метрику</b> — ту, по которой вы примете решение о выкатке.
-      Всё остальное — гвардрайлы: их нельзя сломать, даже если основная метрика растёт.</p>
+      Всё остальное — гвардрейлы: их нельзя сломать, даже если основная метрика растёт.</p>
       <div class="options">${opts}</div>
       <div class="row">
         <button class="primary" id="next2">Спроектировать тест →</button>
@@ -918,9 +1085,9 @@ function screenObserve() {
         (баг, фильтр, различия в клиентском SDK). Дальше считать эффект бессмысленно — сначала чинить.</div>`
           : ''
       }
-      <div class="note">По выбранной основной метрике (<b>${escapeHtml(
-        METRICS[state.primary].label
-      )}</b>): изменение ${signed(res.relLift)}, p ${formatPExpr(res.pValue)} — ${interpretP(res.pValue)}.</div>
+      <div class="note ${res.significant ? 'warn' : ''}">По выбранной основной метрике
+      (<b>${escapeHtml(METRICS[state.primary].label)}</b>): изменение ${signed(res.relLift)}.
+      <b>Вывод:</b> ${verdictText(res)}.</div>
       ${peek}
       <div class="row">
         <button id="fast" ${state.timer ? '' : 'disabled'}>Ускорить ×5</button>
@@ -1104,6 +1271,8 @@ function screenDecision() {
           )} блокирует выкатку.</div>`
           : ''
       }
+      ${hypothesisPanel(scenario, snap)}
+      ${metricProblemHtml(scenario)}
       <div class="row">
         <button class="primary" data-dec="ship">Выкатить вариант B</button>
         <button data-dec="hold">Не выкатывать, вернуть к A</button>
@@ -1153,6 +1322,8 @@ function wireDecision() {
       render();
     };
   });
+  const back = $('#back-metric');
+  if (back) back.onclick = () => backToMetric();
 }
 
 /**
@@ -1315,25 +1486,26 @@ function collectIssues(scenario, snap, expected) {
   }
 
   // --- метрика
-  if (scenario.goodPrimary.includes(state.primary)) {
+  const metricProblemHere = metricProblem(scenario);
+  if (!metricProblemHere) {
     out.push({
       type: 'ok',
       h: 'Основная метрика выбрана верно',
-      b: `«${METRICS[state.primary].label}» отражает ценность изменения, а гвардрайл «${scenario.guardrails
+      b: `«${METRICS[state.primary].label}» отражает ценность изменения, а гвардрейл «${scenario.guardrails
         .map((g) => METRICS[g].label)
         .join('», «')}» не даст выкатить вредный вариант.`,
     });
   } else {
-    const proxyLift = snap.ctr.relLift;
-    const bizLift = Math.abs(snap.conv.relLift);
     out.push({
       type: 'err',
-      h: 'Основная метрика выбрана неверно',
-      b: `Следовало смотреть на «${scenario.goodPrimary
-        .map((g) => METRICS[g].label)
-        .join('», «')}». «${METRICS[state.primary].label}» — прокси: в этом тесте она изменилась на
-        ${signed(proxyLift)}, а бизнес-метрика — лишь на ${signed(snap.conv.relLift)}.
-        Решение по прокси-метрике почти всегда отделяется от решения по деньгам.`,
+      h: metricProblemHere.title,
+      b:
+        scenario.guardrails.includes(state.primary)
+          ? `${metricProblemHere.body} Правило выката строилось как «главная метрика растёт,
+             гвардрейл не падает» — и с двумя одинаковыми метриками оно теряет смысл.`
+          : `${metricProblemHere.body} В этом тесте прокси изменилась на ${signed(
+              snap.ctr.relLift
+            )}, а бизнес-метрика — лишь на ${signed(snap.conv.relLift)}.`,
     });
   }
 
