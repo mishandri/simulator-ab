@@ -171,6 +171,22 @@ bool('симуляция', 'детерминизм: тот же seed = тот ж
 const simSrm = runExperiment(getScenario('broken-randomizer'), {});
 bool('симуляция', 'сценарий с поломкой даёт SRM', srmCheck(simSrm.total.visitors.A, simSrm.total.visitors.B).srm === true);
 
+/* ---------- синтаксическая проверка интерфейса ---------- */
+// app.js нельзя просто импортировать: на этой странице нет нужного DOM и модуль
+// упадёт при обращении к элементам. Но ошибка разбора и ошибка исполнения —
+// разные вещи, поэтому достаточно убедиться, что это не SyntaxError.
+let uiSyntaxOk = true;
+let uiErrMessage = '';
+try {
+  await import('./src/app.js');
+} catch (e) {
+  uiErrMessage = String((e && e.message) || e);
+  if (e instanceof SyntaxError || /SyntaxError|Invalid or unexpected token/i.test(uiErrMessage)) {
+    uiSyntaxOk = false;
+  }
+}
+bool('синтаксис', 'src/app.js разбирается без синтаксических ошибок', uiSyntaxOk);
+
 /* ---------- вывод ---------- */
 const tb = document.querySelector('#results tbody');
 let lastGroup = '';

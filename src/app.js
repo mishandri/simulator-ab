@@ -85,6 +85,8 @@ const state = {
   peekOffered: false,
   stoppedAt: null,
   earlySnap: null,
+  beforeExtend: null,
+  extendedDays: 0,
   decision: null,
 };
 
@@ -174,6 +176,11 @@ function guardrailCheck(scenario, snap) {
 
 // ============================================================ расчёт дизайна
 
+/** Фактическая длительность прогона: после продления она больше запланированной. */
+function actualDuration() {
+  return state.sim ? state.sim.days.length : state.duration;
+}
+
 /**
  * Считает дизайн теста.
  *
@@ -188,8 +195,9 @@ function design() {
   const baseline = scenario.baselineConversion;
   const duration = state.duration;
   // Типичный эффект зависит от длительности: эффект новизны сильнее в начале,
-  // поэтому на коротком тесте средний эффект выше
-  const trueMde = Math.abs(realizedConversionLift(scenario, duration));
+  // поэтому на коротком тесте средний эффект выше. После продления теста
+  // считаем по фактической длительности, а не по плану
+  const trueMde = Math.abs(realizedConversionLift(scenario, actualDuration()));
 
   const perVariant = {
     A: Math.round(scenario.trafficPerDay * (1 - state.shareB)),
@@ -1099,7 +1107,9 @@ function screenDecision() {
       <div class="row">
         <button class="primary" data-dec="ship">Выкатить вариант B</button>
         <button data-dec="hold">Не выкатывать, вернуть к A</button>
-        <button data-dec="more">Продолжить тест ещё на 7 дней</button>
+        <button data-dec="more">Продолжить ещё на ${days(WEEK)}${
+    state.extendedDays ? ` <span class="muted">(уже +${state.extendedDays})</span>` : ''
+  }</button>
       </div>
     </div>`;
 }
@@ -1135,11 +1145,7 @@ function wireDecision() {
   document.querySelectorAll('[data-dec]').forEach((btn) => {
     btn.onclick = () => {
       if (btn.dataset.dec === 'more') {
-        const extra = state.sim.days.slice(state.revealed, state.revealed + 7);
-        state.sim.days = state.sim.days.concat(extra);
-        state.sim.total = aggregate(state.sim.days);
-        state.revealed += 7;
-        renderStep();
+        extendTest(WEEK);
         return;
       }
       state.decision = btn.dataset.dec;
@@ -1147,6 +1153,40 @@ function wireDecision() {
       render();
     };
   });
+}
+
+/**
+ * Продлевает тест на extraDays дней.
+ *
+ * Генерировать дни заново, а не дописывать к существующим: симуляция сразу
+ * считает весь срок, и к концу теста в state.sim.days уже нет свободных дней.
+ * При этом первые N дней не меняются — каждому дню соответствует свой поток
+ * случайных чисел (seed + day*7919), не зависящий от общей длительности.
+ */
+function extendTest(extraDays) {
+  const scenario = getScenario(state.scenarioId);
+  const total = state.sim.days.length + extraDays;
+
+  // Запоминаем, что было видно до продления: если вывод затем поменяется,
+  // это подглядывание, а не добросовестное «дождаться»
+  if (!state.beforeExtend) {
+    const snap = snapshot(scenario, state.sim.days);
+    state.beforeExtend = {
+      days: state.sim.days.length,
+      significant: primaryResult(scenario, snap).significant,
+      relLift: primaryResult(scenario, snap).relLift,
+    };
+  }
+
+  const extended = runExperiment(scenario, { shareB: state.shareB, days: total });
+  state.sim.days = extended.days;
+  state.sim.total = extended.total;
+  state.sim.config.days = total;
+  state.extendedDays += extraDays;
+  // Показываем сразу все собранные данные — пользователь видит, к чему привёл
+  // отложенное решение
+  state.revealed = total;
+  renderStep();
 }
 
 function wireDebrief() {
@@ -1256,7 +1296,7 @@ function issueHtml(i) {
 function collectIssues(scenario, snap, expected) {
   const out = [];
   // Знак эффекта не важен для оценки MDE — важен его размер
-  const trueMde = Math.abs(realizedConversionLift(scenario));
+  const trueMde = Math.abs(realizedConversionLift(scenario, actualDuration()));
 
   // --- гипотеза
   const hypProblems = checkHypothesis(state.hypothesis);
@@ -1334,7 +1374,33 @@ function collectIssues(scenario, snap, expected) {
     });
   }
 
+  // --- продление теста
+  if (state.extendedDays > 0) {
+    const before = state.beforeExtend;
+    const flipped = before && before.significant !== primaryResult(scenario, snap).significant;
+    out.push(
+      flipped
+        ? {
+            type: 'err',
+            h: `Тест продлён на ${days(state.extendedDays)} уже после того, как результат увидели`,
+            b: `На ${days(before.days)} p был ${before.significant ? 'значимым' : 'незначимым'}
+            (${signed(before.relLift)}), а после продления вывод изменился на противоположный.
+            Продление законно, только если о нём договорились <b>до</b> старта. Решение «досижу
+            ещё неделю» после того, как цифра уже на экране, — это подглядывание: вы ищете
+            не данные, а подтверждение нужного вывода.`,
+          }
+        : {
+            type: 'miss',
+            h: `Тест продлён на ${days(state.extendedDays)} постфактум`,
+            b: `Здесь повезло: вывод не изменился. Но полагаться на это нельзя — при следующем
+            таком же эффекте лишняя неделя могла бы перевернуть значимость. Если хотите
+            закладывать такой запас, фиксируйте его в плане до запуска.`,
+          }
+    );
+  }
+
   // --- срок теста
+  const realDuration = actualDuration();
   if (d.daysRecommended > MAX_DAYS) {
     out.push({
       type: 'err',
@@ -1347,30 +1413,30 @@ function collectIssues(scenario, snap, expected) {
       )}, либо признайте, что такой тонкий эффект вы не измерите — это честный вывод,`
         + ` а не «изменений нет».`,
     });
-  } else if (d.duration < d.daysRecommended) {
+  } else if (realDuration < d.daysRecommended) {
     out.push({
       type: 'err',
-      h: `Тест короче необходимого: выбрано ${days(d.duration)}, а нужно ${days(
+      h: `Тест короче необходимого: выбрано ${days(realDuration)}, а нужно ${days(
         d.daysRecommended
       )}`,
       b: `Под MDE ${pct(state.mde, 1)} нужно ${num(d.need)} наблюдений на вариант — это ${days(
         d.daysForSample
-      )}. Вы набрали ${num(d.actualSample)}. Тест недо-мощен: реальный эффект ${pct(
+      )}. Вы набрали ${num(d.bottleneck * realDuration)}. Тест недо-мощен: реальный эффект ${pct(
         trueMde,
         1
-      )} он поймал лишь с вероятностью ${pct(d.powerOnTrue, 0)}. Вывод «изменений нет» на таких данных
-      нельзя превращать в решение — он означает «не хватило данных».`,
+      )} он поймал лишь с вероятностью ${pct(
+        powerForProportion(d.baseline, trueMde, d.bottleneck * realDuration, state.alpha),
+        0
+      )}. Вывод «изменений нет» на таких данных нельзя превращать в решение — он означает
+      «не хватило данных».`,
     });
-  } else if (d.duration > d.daysRecommended + WEEK) {
+  } else if (realDuration > d.daysRecommended + WEEK) {
     out.push({
       type: 'miss',
-      h: `Тест длится дольше, чем нужно: выбрано ${days(d.duration)}, а достаточно ${days(
+      h: `Тест длится дольше, чем нужно: выбрано ${days(realDuration)}, а достаточно ${days(
         d.daysRecommended
       )}`,
-      b: `Данных хватало ещё на ${days(
-        d.duration - d.daysRecommended
-      )}. Держать эксперимент на живом трафике после получения ответа — это риск (сломается
-      вариант, набегут боты) без выигрыша. Единственная причина ждать дольше — нестабильность
+      b: `Данных хватало ещё на ${days(realDuration - d.daysRecommended)}. Держать эксперимент на живом трафике после получения ответа — это риск (сломается вариант, набегут боты) без выигрыша. Единственная причина ждать дольше — нестабильность
       метрики и повторные сравнения.`,
     });
   } else {
@@ -1538,6 +1604,8 @@ function startScenario(id) {
   state.peekOffered = false;
   state.stoppedAt = null;
   state.earlySnap = null;
+  state.beforeExtend = null;
+  state.extendedDays = 0;
   state.decision = null;
   render();
 }
