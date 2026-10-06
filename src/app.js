@@ -525,16 +525,6 @@ function durationHint(d) {
 }
 
 function screenDesign() {
-  const scenario = getScenario(state.scenarioId);
-  const d = design();
-  const mdePercent = (state.mde * 100).toFixed(1);
-  const sharePercent = (state.shareB * 100).toFixed(0);
-  const isDefault =
-    state.mde === DEFAULT_MDE &&
-    state.shareB === DEFAULT_SHARE &&
-    state.alpha === DEFAULT_ALPHA &&
-    state.duration === DEFAULT_DAYS;
-
   return `
     <div class="card">
       <h2>Шаг 3. Дизайн теста</h2>
@@ -542,75 +532,141 @@ function screenDesign() {
       Подсказки под ползунками подсказывают направление — но итоговое решение остаётся за вами.</p>
 
       <div class="params">
-        <label>MDE — минимальный эффект, ради которого стоит запускать тест: <b id="mdeLabel">${mdePercent}%</b></label>
-        <input type="range" id="mde" min="0.5" max="30" step="0.5" value="${mdePercent}">
-        <div id="mdeHint">${mdeHint(d)}</div>
+        <label>MDE — минимальный эффект, ради которого стоит запускать тест:
+          <b class="v-label" data-for="mde"></b></label>
+        <input type="range" id="mde" min="0.5" max="30" step="0.5">
+        <div data-hint="mde"></div>
 
-        <label>Доля трафика на вариант B: <b id="shareLabel">${sharePercent}%</b> (A получит ${100 - Number(sharePercent)}%)</label>
-        <input type="range" id="share" min="10" max="50" step="5" value="${sharePercent}">
-        <div id="shareHint">${shareHint(d)}</div>
+        <label>Доля трафика на вариант B: <b class="v-label" data-for="share"></b></label>
+        <input type="range" id="share" min="10" max="50" step="5">
+        <div data-hint="share"></div>
 
-        <label>Длительность теста: <b id="durationLabel">${days(state.duration)}</b>
-        <span class="muted">(кратно ${WEEK} дням)</span></label>
-        <input type="range" id="duration" min="${MIN_DAYS}" max="${MAX_DAYS}" step="${WEEK}"
-          value="${state.duration}">
-        <div id="durationHint">${durationHint(d)}</div>
+        <label>Длительность теста: <b class="v-label" data-for="duration"></b>
+          <span class="muted">(кратно ${WEEK} дням)</span></label>
+        <input type="range" id="duration" min="${MIN_DAYS}" max="${MAX_DAYS}" step="${WEEK}">
+        <div data-hint="duration"></div>
 
         <label>Уровень значимости α</label>
         <select id="alpha">
-          <option value="0.05" ${state.alpha === 0.05 ? 'selected' : ''}>0.05 — стандарт</option>
-          <option value="0.01" ${state.alpha === 0.01 ? 'selected' : ''}>0.01 — строже, нужно больше данных</option>
-          <option value="0.1" ${state.alpha === 0.1 ? 'selected' : ''}>0.10 — нестрого, много ложных побед</option>
+          <option value="0.05">0.05 — стандарт</option>
+          <option value="0.01">0.01 — строже, нужно больше данных</option>
+          <option value="0.1">0.10 — нестрого, много ложных побед</option>
         </select>
-        <div id="alphaHint">${alphaHint(d)}</div>
+        <div data-hint="alpha"></div>
 
         <div class="row">
-          <button id="reset" ${isDefault ? 'disabled' : ''}>Сбросить параметры</button>
-          <span class="muted" style="font-size:13px;align-self:center">вернёт MDE ${pct(
-    DEFAULT_MDE,
-    0
-  )}, трафик ${pct(DEFAULT_SHARE, 0)}, срок ${DEFAULT_DAYS} дн. и α ${DEFAULT_ALPHA}</span>
+          <button id="reset">Сбросить параметры</button>
+          <span class="muted" style="font-size:13px;align-self:center" id="reset-note"></span>
         </div>
       </div>
 
-      <div id="design-msg">${designWarnings()}</div>
+      <div id="design-msg"></div>
 
       <h3>Расчёт</h3>
-      <table>
-        <tr><td>Базовая конверсия</td><td class="num">${pct(d.baseline)}</td></tr>
-        <tr><td>Конверсия B при заявленном MDE ${mdePercent}%</td>
-        <td class="num">${pct(d.baseline * (1 + state.mde))}</td></tr>
-        <tr><td>Нужный объём на вариант под этот MDE</td><td class="num">${num(d.need)}</td></tr>
-        <tr><td>Трафик в вариант B в день</td><td class="num">${num(d.perVariant.B)}</td></tr>
-        <tr><td>Срок по объёму данных</td>
-        <td class="num">≈ ${days(d.daysForSample)}</td></tr>
-        <tr><td>Срок, кратный неделе</td>
-        <td class="num">${days(d.daysRecommended)}</td></tr>
-        <tr class="hl"><td>Ваш срок</td><td class="num">${days(d.duration)}</td></tr>
-      </table>
+      <table id="calc-table"><tbody></tbody></table>
 
       <h3>Что получится на самом деле</h3>
-      <p>Объём данных задаёт срок, а не MDE: за ${days(d.duration)} на вариант наберётся
-      ${num(d.actualSample)} наблюдений. Вот что из этого следует.</p>
-      <table>
-        <tr><td>Данных на вариант за ${days(d.duration)}</td>
-        <td class="num">${num(d.actualSample)}</td></tr>
-        <tr><td>Нужно под ваш MDE ${mdePercent}%</td>
-        <td class="num ${d.actualSample >= d.need ? 'pos' : 'neg'}">${num(d.need)}</td></tr>
-        <tr class="hl"><td>Мощность на вашем MDE</td>
-        <td class="num ${powerOk(d.powerAtChosen) ? 'pos' : 'neg'}">${powerText(d.powerAtChosen)}</td></tr>
-        <tr><td>Типичный эффект в этой задаче (о нём вы не знаете)</td>
-        <td class="num">${pct(d.trueMde, 1)}</td></tr>
-        <tr><td>Мощность на типичном эффекте</td>
-        <td class="num ${powerOk(d.powerOnTrue) ? 'pos' : 'neg'}">${powerText(d.powerOnTrue)}</td></tr>
-        <tr><td>Эффект, который тест надёжно отличит от нуля</td>
-        <td class="num">${pct(d.mdeAchievable, 2)}</td></tr>
-      </table>
-      <div id="design-msg"></div>
+      <p id="reality-lead"></p>
+      <table id="reality-table"><tbody></tbody></table>
+
       <div class="row">
-        <button class="primary" id="run">Запустить тест на ${days(state.duration)} →</button>
+        <button class="primary" id="run"></button>
       </div>
     </div>`;
+}
+
+/**
+ * Обновляет все зависимые от ползунков части экрана, не трогая сами ползунки.
+ *
+ * Перерисовывать весь экран на событии input нельзя: элемент ползунка
+ * пересоздаётся посреди перетаскивания, браузер теряет захват мыши, и
+ * пользователь может сдвинуть его только на одно деление. Поэтому шаблон
+ * рендерится один раз, а дальше меняются только текстовые узлы.
+ */
+function updateDesign() {
+  const d = design();
+  const mdePercent = (state.mde * 100).toFixed(1);
+  const sharePercent = (state.shareB * 100).toFixed(0);
+
+  // Значения самих контролов — иначе после сброса ползунки останутся
+  // в старом положении при новом state
+  const mdeEl = $('#mde');
+  const shareEl = $('#share');
+  const durEl = $('#duration');
+  const alphaEl = $('#alpha');
+  if (mdeEl.value !== mdePercent) mdeEl.value = mdePercent;
+  if (shareEl.value !== sharePercent) shareEl.value = sharePercent;
+  if (Number(durEl.value) !== state.duration) durEl.value = String(state.duration);
+  if (Number(alphaEl.value) !== state.alpha) alphaEl.value = String(state.alpha);
+
+  const labels = {
+    mde: `${mdePercent}%`,
+    share: `${sharePercent}% (A получит ${100 - Number(sharePercent)}%)`,
+    duration: days(state.duration),
+  };
+  app.querySelectorAll('.v-label').forEach((el) => {
+    el.textContent = labels[el.dataset.for];
+  });
+
+  app.querySelector('[data-hint="mde"]').innerHTML = mdeHint(d);
+  app.querySelector('[data-hint="share"]').innerHTML = shareHint(d);
+  app.querySelector('[data-hint="duration"]').innerHTML = durationHint(d);
+  app.querySelector('[data-hint="alpha"]').innerHTML = alphaHint(d);
+
+  $('#design-msg').innerHTML = designWarnings();
+  $('#calc-table tbody').innerHTML = calcRows(d, mdePercent);
+  $('#reality-lead').innerHTML = `Объём данных задаёт срок, а не MDE: за ${days(d.duration)} на
+    вариант наберётся ${num(d.actualSample)} наблюдений. Вот что из этого следует.`;
+  $('#reality-table tbody').innerHTML = realityRows(d, mdePercent);
+
+  const isDefault = isDesignDefault();
+  $('#reset').disabled = isDefault;
+  $('#reset-note').innerHTML = isDefault
+    ? 'параметры уже дефолтные'
+    : `вернёт MDE ${pct(DEFAULT_MDE, 0)}, трафик ${pct(DEFAULT_SHARE, 0)}, срок ${DEFAULT_DAYS} дн. и α ${DEFAULT_ALPHA}`;
+
+  $('#run').textContent = `Запустить тест на ${days(state.duration)} →`;
+}
+
+function isDesignDefault() {
+  return (
+    state.mde === DEFAULT_MDE &&
+    state.shareB === DEFAULT_SHARE &&
+    state.alpha === DEFAULT_ALPHA &&
+    state.duration === DEFAULT_DAYS
+  );
+}
+
+/** Строки таблицы «Расчёт». */
+function calcRows(d, mdePercent) {
+  return `
+    <tr><td>Базовая конверсия</td><td class="num">${pct(d.baseline)}</td></tr>
+    <tr><td>Конверсия B при заявленном MDE ${mdePercent}%</td>
+    <td class="num">${pct(d.baseline * (1 + state.mde))}</td></tr>
+    <tr><td>Нужный объём на вариант под этот MDE</td><td class="num">${num(d.need)}</td></tr>
+    <tr><td>Трафик в вариант B в день</td><td class="num">${num(d.perVariant.B)}</td></tr>
+    <tr><td>Срок по объёму данных</td>
+    <td class="num">≈ ${days(d.daysForSample)}</td></tr>
+    <tr><td>Срок, кратный неделе</td>
+    <td class="num">${days(d.daysRecommended)}</td></tr>
+    <tr class="hl"><td>Ваш срок</td><td class="num">${days(d.duration)}</td></tr>`;
+}
+
+/** Строки таблицы «Что получится на самом деле». */
+function realityRows(d, mdePercent) {
+  return `
+    <tr><td>Данных на вариант за ${days(d.duration)}</td>
+    <td class="num">${num(d.actualSample)}</td></tr>
+    <tr><td>Нужно под ваш MDE ${mdePercent}%</td>
+    <td class="num ${d.actualSample >= d.need ? 'pos' : 'neg'}">${num(d.need)}</td></tr>
+    <tr class="hl"><td>Мощность на вашем MDE</td>
+    <td class="num ${powerOk(d.powerAtChosen) ? 'pos' : 'neg'}">${powerText(d.powerAtChosen)}</td></tr>
+    <tr><td>Типичный эффект в этой задаче (о нём вы не знаете)</td>
+    <td class="num">${pct(d.trueMde, 1)}</td></tr>
+    <tr><td>Мощность на типичном эффекте</td>
+    <td class="num ${powerOk(d.powerOnTrue) ? 'pos' : 'neg'}">${powerText(d.powerOnTrue)}</td></tr>
+    <tr><td>Эффект, который тест надёжно отличит от нуля</td>
+    <td class="num">${pct(d.mdeAchievable, 2)}</td></tr>`;
 }
 
 function designWarnings() {
@@ -716,31 +772,33 @@ function designWarnings() {
 }
 
 function wireDesign() {
-  // Перерисовка целиком: подсказки, расчёт и выводы зависят от всех трёх параметров
-  const upd = () => {
-    state.mde = Number($('#mde').value) / 100;
-    state.shareB = Number($('#share').value) / 100;
-    state.duration = Number($('#duration').value);
-    const keepScroll = window.scrollY;
-    renderStep();
-    window.scrollTo(0, keepScroll);
+  // Ползунки обновляют только зависимые блоки, себя не пересоздавая:
+  // перерисовка на input посреди перетаскивания рвёт захват мыши
+  $('#mde').oninput = (e) => {
+    state.mde = Number(e.target.value) / 100;
+    updateDesign();
   };
-  $('#mde').oninput = upd;
-  $('#share').oninput = upd;
-  $('#duration').oninput = upd;
+  $('#share').oninput = (e) => {
+    state.shareB = Number(e.target.value) / 100;
+    updateDesign();
+  };
+  $('#duration').oninput = (e) => {
+    state.duration = Number(e.target.value);
+    updateDesign();
+  };
   $('#alpha').onchange = (e) => {
     state.alpha = Number(e.target.value);
-    renderStep();
+    updateDesign();
   };
-  // Единый сброс всех параметров теста
   $('#reset').onclick = () => {
     state.mde = DEFAULT_MDE;
     state.shareB = DEFAULT_SHARE;
     state.alpha = DEFAULT_ALPHA;
     state.duration = DEFAULT_DAYS;
-    renderStep();
+    updateDesign();
   };
   $('#run').onclick = () => startExperiment();
+  updateDesign();
 }
 
 function startExperiment() {
