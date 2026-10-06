@@ -847,7 +847,9 @@ function screenObserve() {
   const guard = guardrailCheck(scenario, snap);
   const total = state.sim.days.length;
   const peekAt = peekDay(total);
-  const share = total / 3;
+  // Доля теста, к которой уже накопились данные — то, на что вы смотрите
+  const share = peekAt / total;
+  const shareText = `${Math.round(share * 100)}%`;
 
   const peek = state.peekOffered
     ? `<div class="note bad"><b>Руководитель прибежал с вопросом.</b>
@@ -856,9 +858,12 @@ function screenObserve() {
           <button class="danger" id="stopNow">Остановить тест и объявить победителя</button>
           <button class="primary" id="keepGoing">Продолжить до конца</button>
         </div>
-        <p style="margin-bottom:0">Соблазн велик: цифра p-value уже на экране. Но вы смотрите
-        на долю данных в ${(share * 100).toFixed(0)}%. Каждая такая проверка — дополнительная
-        попытка поймать шум, и именно она порождает ложные открытия.</p></div>`
+        <p style="margin-bottom:0">Соблазн велик: p-value уже на экране, и он выглядит
+        убедительно. Но это решение опирается на ${shareText} будущего результата —
+        данные за ${days(peekAt)} из ${total}. Каждая такая проверка в середине теста —
+        дополнительная попытка поймать шум, и именно она порождает ложные открытия.
+        Срок и объём выборки были зафиксированы до старта: дождаться конца стоит
+        бесплатно, а вот пересмотреть план задним числом — нет.</p></div>`
     : '';
 
   return `
