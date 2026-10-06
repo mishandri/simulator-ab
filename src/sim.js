@@ -185,12 +185,12 @@ export function trueArpu(days, variant) {
  * Нужен, чтобы оценивать, адекватен ли выбранный учеником MDE: заявленный в
  * сценарии эффект действует в первые дни сильнее, чем в среднем за тест.
  */
-export function averageEffectFactor(scenario) {
+export function averageEffectFactor(scenario, totalDays = scenario.durationDays) {
   const { novelty } = scenario.truth;
   const { slowStart } = scenario.traps;
   let sum = 0;
   let wsum = 0;
-  for (let d = 0; d < scenario.durationDays; d++) {
+  for (let d = 0; d < totalDays; d++) {
     const w = WEEKDAY_FACTOR[(d + 1) % 7];
     const slow = slowStart && d < 2 ? (d === 0 ? 1.25 : 0.9) : 1;
     sum += w * noveltyFactor(d, novelty, 3) * slow;
@@ -204,8 +204,8 @@ export function averageEffectFactor(scenario) {
  * Складывается из двух слоёв: изменение доли кликов и изменение вероятности
  * покупки среди кликнувших.
  */
-export function realizedConversionLift(scenario) {
+export function realizedConversionLift(scenario, totalDays = scenario.durationDays) {
   const { ctrLiftRel = 0, condConversionLiftRel } = scenario.truth;
-  const effect = averageEffectFactor(scenario);
+  const effect = averageEffectFactor(scenario, totalDays);
   return (1 + ctrLiftRel * effect) * (1 + condConversionLiftRel * effect) - 1;
 }
