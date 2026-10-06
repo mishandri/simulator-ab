@@ -1,0 +1,43 @@
+name: Deploy to GitHub Pages
+
+# Сайт статический, сборка не нужна: просто публикуем файлы как есть.
+# Поэтому workflow одинаков для ветки main и для вкладок из форка —
+# достаточно переключить environment вручную, ничего не ломая в коде.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - name: Подготовить статические файлы
+        run: |
+          # Сборки нет: публикуем файлы как есть.
+          # Убираем только dev-утилиты — они нужны в репозитории, но не пользователю.
+          rm -rf tools
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

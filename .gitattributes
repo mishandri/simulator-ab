@@ -1,0 +1,13 @@
+# Служебный мусор
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+
+# Локальные заметки
+*.local
+.idea/
+.vscode/
+
+# Windows: путь конца строки в чеках не важен
+* text=auto eol=lf

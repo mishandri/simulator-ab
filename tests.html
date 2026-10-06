@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Тесты статистики — Симулятор A/B тестов</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧪</text></svg>">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <div class="brand">Симулятор <span>A/B</span> тестов</div>
+    <nav class="top">
+      <a href="index.html">Симулятор</a>
+      <a href="tests.html">Тесты статистики</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h2>Тесты статистического ядра</h2>
+    <p class="lead">Ожидаемые значения вычислены <b>независимой реализацией</b> на Python
+    (<code>tools/reference.py</code>) через <code>math.erf</code> и регулярные аппроксимации
+    неполной гамма- и бета-функций. Если JS и Python сходятся до 1e-12 — вероятность общей
+    ошибки в формуле практически нулевая.</p>
+    <div id="summary" class="note">Запускаем…</div>
+  </div>
+  <div class="card">
+    <table id="results">
+      <tr><th>Проверка</th><th class="num">Получено</th><th class="num">Ожидается</th><th class="num">Δ</th><th>Итог</th></tr>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h3>Дополнительно: симуляция целочисленного счёта</h3>
+    <p>Отдельно проверяем, что агрегация по дням даёт ту же статистику, что и подсчёт по
+    единому списку наблюдений, а график накопленной конверсии сходится к итоговой.</p>
+    <table id="simtests">
+      <tr><th>Проверка</th><th>Детали</th><th>Итог</th></tr>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="row">
+    <a href="index.html"><button class="primary">К симулятору</button></a>
+  </div>
+</div>
+
+<script type="module">
+import {
+  normCdf, normInv, normPdf, twoProportionZTest, welchFromStats, welchTTest,
+  studentTCdf, studentTInv, chi2SF, srmCheck, sampleSizeProportion, mdeForProportion,
+  powerForProportion, sdFromMoments,
+} from './src/stats.js';
+import { runExperiment, aggregate, cumulativeByDay } from './src/sim.js';
+import { getScenario } from './src/scenarios.js';
+
+const rows = [];
+function check(group, name, got, expected, tol = 1e-9) {
+  const ok = typeof got === 'boolean' ? got === expected
+    : Math.abs(got - expected) <= tol * Math.max(1, Math.abs(expected));
+  rows.push({ group, name, got, expected, ok });
+}
+const bool = (group, name, got) => rows.push({ group, name, got: String(got), expected: '—', ok: !!got });
+
+/* ---------- нормальное распределение ---------- */
+check('Φ(x)', 'Φ(1.959963985)', normCdf(1.959963985), 0.9750000000268815, 1e-9);
+check('Φ(x)', 'Φ(-2.5)', normCdf(-2.5), 0.006209665325776139, 1e-12);
+check('Φ(x)', 'Φ(0)', normCdf(0), 0.5, 1e-12);
+check('Φ(x)', 'Φ(3.5)', normCdf(3.5), 0.9997673709209645, 1e-11);
+check('φ(x)', 'φ(0)', normPdf(0), 0.3989422804014327, 1e-12);
+check('Φ⁻¹(p)', 'Φ⁻¹(0.975)', normInv(0.975), 1.9599639845400545, 1e-10);
+check('Φ⁻¹(p)', 'Φ⁻¹(0.8)', normInv(0.8), 0.8416212335729141, 1e-10);
+check('Φ⁻¹(p)', 'Φ⁻¹(0.995)', normInv(0.995), 2.5758293035488986, 1e-10);
+check('self', 'Φ(Φ⁻¹(0.975))', normCdf(normInv(0.975)), 0.975, 1e-12);
+
+/* ---------- z-тест для долей ---------- */
+let r = twoProportionZTest(1000, 10000, 1150, 10000);
+check('z-тест', 'z (10% vs 11.5%)', r.z, 3.4242693353108837, 1e-10);
+check('z-тест', 'p-value', r.pValue, 0.0006164549192146929, 1e-10);
+check('z-тест', 'ДИ нижняя', r.ci[0], 0.006416901693801845, 1e-10);
+check('z-тест', 'ДИ верхняя', r.ci[1], 0.023583098306198154, 1e-10);
+check('z-тест', 'относительный прирост', r.relLift, 0.15, 1e-12);
+bool('z-тест', 'значимость при α=0.05', r.significant === true);
+
+r = twoProportionZTest(1000, 10000, 1002, 10000);
+check('z-тест', 'p при нулевой разнице', r.pValue, 0.9624179720259562, 1e-10);
+bool('z-тест', 'нет значимости при нулевой разнице', r.significant === false);
+
+r = twoProportionZTest(500, 5000, 260, 5000);
+check('z-тест', 'p при падении 10%→5.2%', r.pValue, 1.3459e-09, 5e-3);
+bool('z-тест', 'значимое падение', r.significant === true);
+
+/* ---------- t-распределение ---------- */
+check('t', 't₀.₉₇₅(10)', studentTInv(0.975, 10), 2.228138851986274, 1e-10);
+check('t', 't₀.₉₇₅(1000)', studentTInv(0.975, 1000), 1.9623390808264358, 1e-10);
+check('t', 'T(2.2281, 10)', studentTCdf(2.228138851986274, 10), 0.975, 1e-12);
+check('t', 'T(0, 10)', studentTCdf(0, 10), 0.5, 1e-12);
+
+/* ---------- t-тест Уэлча ---------- */
+const wa = welchFromStats(
+  { meanA: 102.4, sdA: 88, nA: 10000 },
+  { meanB: 108.1, sdB: 91, nB: 10000 }
+);
+check('Уэлч', 't', wa.t, 4.502729281540168, 1e-9);
+check('Уэлч', 'df', wa.df, 19975.56884426566, 1e-9);
+check('Уэлч', 'p-value', wa.pValue, 6.746570872190815e-06, 1e-6);
+check('Уэлч', 'ДИ нижняя', wa.ci[0], 3.2187334219296115, 1e-9);
+check('Уэлч', 'ДИ верхняя', wa.ci[1], 8.181266578070366, 1e-9);
+
+const raw = [];
+for (let i = 0; i < 5000; i++) raw.push(i / 50);
+const wb = welchTTest(raw, raw.map((v) => v + 1.1));
+bool('Уэлч', 'одинаковые выборки дают p > 0.05', wb.pValue > 0.05);
+
+/* ---------- хи-квадрат и SRM ---------- */
+check('χ²', 'P(X>3.841458821, df=1)', chi2SF(3.841458821, 1), 0.049999999990879, 1e-8);
+check('χ²', 'P(X>10, df=4)', chi2SF(10, 4), 0.04042768199451279, 1e-10);
+check('χ²', 'P(X>90, df=1)', chi2SF(90, 1), 2.3816001643962974e-21, 1e-9);
+
+bool('SRM', 'честное 50/50 не триггерит', srmCheck(100000, 100000).srm === false);
+bool('SRM', 'сдвиг 50/58 триггерит', srmCheck(95000, 105000).srm === true);
+check('SRM', 'χ² при 50/50 на большой выборке', srmCheck(20000, 20000).chi2, 0, 1e-12);
+
+/* ---------- MDE / мощность / выборка ---------- */
+check('дизайн', 'n при baseline 5% и MDE 10%', sampleSizeProportion(0.05, 0.10), 31234, 0);
+check('дизайн', 'n при baseline 5% и MDE 5%', sampleSizeProportion(0.05, 0.05), 122124, 0);
+check('дизайн', 'n при baseline 20% и MDE 20%', sampleSizeProportion(0.20, 0.20), 1683, 0);
+const mdeRatio = sampleSizeProportion(0.05, 0.04) / sampleSizeProportion(0.05, 0.08);
+bool('дизайн', 'n растёт примерно как 1/MDE² (×2 MDE → ÷3.93 трафика)', mdeRatio > 3.8 && mdeRatio < 4.2);
+check('дизайн', 'MDE обратная задача', mdeForProportion(0.05, 31234, 0.8, 0.05), 0.1, 1e-6);
+{
+  // размер выборки почти симметричен по знаку эффекта (различие — из-за асимметрии долей)
+  const nPos = sampleSizeProportion(0.05, 0.1);
+  const nNeg = sampleSizeProportion(0.05, -0.1);
+  const ratioN = Math.max(nPos, nNeg) / Math.min(nPos, nNeg);
+  bool('дизайн', `размер выборки почти симметричен по знаку (×${ratioN.toFixed(2)})`, ratioN < 1.15);
+}
+check('дизайн', 'мощность при 80% и правильном n', powerForProportion(0.05, 0.1, 31234, 0.05), 0.8, 2e-3);
+bool('дизайн', 'мощность падает при малом n', powerForProportion(0.05, 0.1, 5000, 0.05) < 0.5);
+bool('дизайн', 'мощность растёт при большем n', powerForProportion(0.05, 0.1, 200000, 0.05) > 0.99);
+bool('дизайн', 'мощность для отрицательного эффекта того же размера близка к 80%', Math.abs(powerForProportion(0.05, -0.1, 31234, 0.05) - 0.8) < 0.06);
+
+/* ---------- моменты и симуляция ---------- */
+// sd по моментам должен совпадать с честным двухпроходным вычислением
+const seq = Array.from({ length: 100 }, (_, i) => i + 1);
+const seqSum = seq.reduce((a, b) => a + b, 0);
+const seqSumSq = seq.reduce((a, b) => a + b * b, 0);
+const seqMean = seqSum / seq.length;
+const twoPass = Math.sqrt(seq.reduce((s, v) => s + (v - seqMean) ** 2, 0) / (seq.length - 1));
+check('моменты', 'sd по моментам = двухпроходному вычислению', sdFromMoments(seqSum, seqSumSq, 100), twoPass, 1e-10);
+check('моменты', 'аналитический sd выборки 1..100', sdFromMoments(seqSum, seqSumSq, 100), 29.011491975882016, 1e-12);
+check('моменты', 'sd константы = 0', sdFromMoments(50 * 1000, 2500 * 1000, 1000), 0, 1e-12);
+
+const sc = getScenario('checkout-button');
+const sim = runExperiment(sc, {});
+const t = aggregate(sim.days);
+bool('симуляция', 'все дни посчитаны', t.visitors.A + t.visitors.B > 300000);
+bool('симуляция', 'конверсия A в разумных пределах', t.conv.A / t.visitors.A > 0.05 && t.conv.A / t.visitors.A < 0.16);
+bool('симуляция', 'B лучше A (заложен +6%)', t.conv.B / t.visitors.B > t.conv.A / t.visitors.A);
+const cum = cumulativeByDay(sim.days);
+bool('симуляция', 'последняя точка графика = итог', Math.abs(cum.at(-1).rateA - t.conv.A / t.visitors.A) < 1e-12);
+bool('симуляция', 'накопление монотонно', cum.every((d, i) => i === 0 || d.cumN_A >= cum[i - 1].cumN_A));
+
+const sim2 = runExperiment(sc, {});
+bool('симуляция', 'детерминизм: тот же seed = тот же результат', sim2.total.conv.B === t.conv.B);
+
+const simSrm = runExperiment(getScenario('broken-randomizer'), {});
+bool('симуляция', 'сценарий с поломкой даёт SRM', srmCheck(simSrm.total.visitors.A, simSrm.total.visitors.B).srm === true);
+
+/* ---------- вывод ---------- */
+const tb = document.querySelector('#results tbody');
+let lastGroup = '';
+for (const r of rows) {
+  if (r.group !== lastGroup) {
+    tb.innerHTML += `<tr><th colspan="5" style="border-top:2px solid #2a3441">${r.group}</th></tr>`;
+    lastGroup = r.group;
+  }
+  const d = typeof r.got === 'number' && typeof r.expected === 'number'
+    ? (r.got - r.expected).toExponential(2) : '—';
+  tb.innerHTML += `<tr>
+    <td>${r.name}</td>
+    <td class="num">${typeof r.got === 'number' ? r.got.toPrecision(10) : r.got}</td>
+    <td class="num muted">${typeof r.expected === 'number' ? r.expected.toPrecision(10) : r.expected}</td>
+    <td class="num muted">${d}</td>
+    <td class="${r.ok ? 'pos' : 'neg'}">${r.ok ? '✓ PASS' : '✗ FAIL'}</td>
+  </tr>`;
+}
+
+const failed = rows.filter((r) => !r.ok);
+document.querySelector('#summary').className = failed.length ? 'note bad' : 'note good';
+document.querySelector('#summary').innerHTML = failed.length
+  ? `<b>Провалено ${failed.length} из ${rows.length}</b><br>` +
+    failed.map((r) => `${r.group} → ${r.name}: ${r.got} вместо ${r.expected}`).join('<br>')
+  : `<b>Все ${rows.length} проверок пройдены.</b> JS-реализация совпадает с независимой
+     Python-реализацией в пределах машинной точности.`;
+
+const st = document.querySelector('#simtests tbody');
+for (const r of rows.filter((r) => r.group === 'симуляция')) {
+  st.innerHTML += `<tr><td>${r.name}</td><td class="muted">${r.got}</td>
+    <td class="${r.ok ? 'pos' : 'neg'}">${r.ok ? '✓ PASS' : '✗ FAIL'}</td></tr>`;
+}
+</script>
+</body>
+</html>

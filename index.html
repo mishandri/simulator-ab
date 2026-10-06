@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Симулятор A/B тестов — тренажёр аналитика</title>
+<meta name="description" content="Интерактивный тренажёр A/B тестов: гипотеза, MDE, мощность, статистика и разбор собственных ошибок. Всё считается в браузере, данные синтетические.">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🧪</text></svg>">
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <div class="brand">Симулятор <span>A/B</span> тестов</div>
+    <nav class="top">
+      <a href="#" id="nav-sim">Симулятор</a>
+      <a href="tests.html">Тесты статистики</a>
+      <a href="https://github.com" id="nav-src" target="_blank" rel="noopener">Код</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="app"></div>
+  <footer class="site">
+    Все данные синтетические и генерируются в браузере по фиксированному seed — результат воспроизводим.
+    Статистика реализована с нуля и проверяется на эталонных значениях.
+  </footer>
+</div>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
