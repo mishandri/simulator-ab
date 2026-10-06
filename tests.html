@@ -156,9 +156,11 @@ check('моменты', 'sd константы = 0', sdFromMoments(50 * 1000, 25
 const sc = getScenario('checkout-button');
 const sim = runExperiment(sc, {});
 const t = aggregate(sim.days);
-bool('симуляция', 'все дни посчитаны', t.visitors.A + t.visitors.B > 300000);
+bool('симуляция', 'дней ровно столько, сколько задано сценарием', sim.days.length === sc.durationDays);
+bool('симуляция', 'трафик за тест заметно больше 20 тысяч', t.visitors.A + t.visitors.B > 20000);
 bool('симуляция', 'конверсия A в разумных пределах', t.conv.A / t.visitors.A > 0.05 && t.conv.A / t.visitors.A < 0.16);
-bool('симуляция', 'B лучше A (заложен +6%)', t.conv.B / t.visitors.B > t.conv.A / t.visitors.A);
+bool('симуляция', 'B лучше A (заложен положительный эффект)', t.conv.B / t.visitors.B > t.conv.A / t.visitors.A);
+bool('симуляция', 'базовые метрики сценария воспроизводятся', Math.abs(t.clicks.A / t.visitors.A - sc.baselineCtr) < 0.02);
 const cum = cumulativeByDay(sim.days);
 bool('симуляция', 'последняя точка графика = итог', Math.abs(cum.at(-1).rateA - t.conv.A / t.visitors.A) < 1e-12);
 bool('симуляция', 'накопление монотонно', cum.every((d, i) => i === 0 || d.cumN_A >= cum[i - 1].cumN_A));

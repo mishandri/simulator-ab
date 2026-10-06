@@ -24,6 +24,8 @@ import {
 
 const STEPS = ['Гипотеза', 'Метрика', 'Дизайн', 'Наблюдение', 'Решение', 'Разбор'];
 const POWER_TARGET = 0.8;
+/** Минимальный срок теста: нужно перекрыть полную неделю из-за цикличности трафика. */
+const MIN_DAYS = 7;
 const REVEAL_MS = 260;
 const PEEK_DAY = 7; // на какой день «менеджер прибегает с вопросом»
 
@@ -54,6 +56,17 @@ const pct = (x, digits = 2) => `${(x * 100).toFixed(digits)}%`;
 const signed = (x, digits = 2) => `${x > 0 ? '+' : ''}${(x * 100).toFixed(digits)}%`;
 const num = (x, digits = 0) => Number(x).toLocaleString('ru-RU', { maximumFractionDigits: digits });
 const money = (x) => `${x.toFixed(1).replace('.', ',')} ₽`;
+
+/** Русское склонение: plural(21, ['день','дня','дней']) → 'день'. */
+function plural(n, forms) {
+  const a = Math.abs(n) % 100;
+  const b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  if (b === 1) return forms[0];
+  return forms[2];
+}
+const days = (n) => `${n} ${plural(n, ['день', 'дня', 'дней'])}`;
 
 function cls(x) {
   return x > 0 ? 'pos' : x < 0 ? 'neg' : 'muted';
@@ -120,17 +133,51 @@ function guardrailCheck(scenario, snap) {
 
 // ============================================================ расчёт дизайна
 
+/**
+ * Считает дизайн теста.
+ *
+ * Важно различать два разных срока:
+ *  - срок по объёму данных — сколько нужно набрать данных под заявленный MDE;
+ *  - реальный объём — сколько данных симулятор наберёт за свои scenario.durationDays дней.
+ * Мощность имеет смысл считать на реальном объёме и на типичном эффекте:
+ * именно так выясняется, не «слишком ли мелкий» выбранный MDE.
+ */
 function design() {
   const scenario = getScenario(state.scenarioId);
   const baseline = scenario.baselineConversion;
+  const trueMde = Math.abs(realizedConversionLift(scenario));
+
   const perVariant = {
     A: Math.round(scenario.trafficPerDay * (1 - state.shareB)),
     B: Math.round(scenario.trafficPerDay * state.shareB),
   };
+  // На прогнозы отвечает вариант с меньшим трафиком — он набирает данные дольше
+  const bottleneck = perVariant.A < perVariant.B ? perVariant.A : perVariant.B;
+
   const need = sampleSizeProportion(baseline, state.mde, POWER_TARGET, state.alpha);
-  const daysNeeded = durationDays(need, perVariant.B);
-  const power = powerForProportion(baseline, state.mde, need, state.alpha);
-  return { baseline, perVariant, need, daysNeeded, power, scenario };
+  const daysForSample = durationDays(need, bottleneck);
+  // Даже если данных хватает за день, тест должен покрыть полную неделю:
+  // у трафика и конверсии есть недельная цикличность
+  const days = Math.max(daysForSample, MIN_DAYS);
+
+  // Что действительно наберётся за срок симуляции
+  const actualSample = bottleneck * scenario.durationDays;
+
+  return {
+    baseline,
+    trueMde,
+    perVariant,
+    need,
+    daysForSample,
+    days,
+    actualSample,
+    // Мощность на заявленном MDE при реально набранном объёме
+    powerAtChosen: powerForProportion(baseline, state.mde, actualSample, state.alpha),
+    // Мощность на типичном эффекте при реально набранном объёме — вот это и важно
+    powerOnTrue: powerForProportion(baseline, trueMde, actualSample, state.alpha),
+    mdeAchievable: mdeForProportion(baseline, actualSample, POWER_TARGET, state.alpha),
+    scenario,
+  };
 }
 
 // ============================================================ рендер каркаса
@@ -313,15 +360,31 @@ function screenDesign() {
       <h3>Расчёт</h3>
       <table>
         <tr><td>Базовая конверсия</td><td class="num">${pct(d.baseline)}</td></tr>
-        <tr><td>Нужная конверсия B при ${mdePercent}%</td><td class="num">${pct(d.baseline * (1 + state.mde))}</td></tr>
-        <tr><td>Размер выборки на вариант</td><td class="num">${num(d.need)}</td></tr>
+        <tr><td>Конверсия B при заявленном MDE ${mdePercent}%</td>
+        <td class="num">${pct(d.baseline * (1 + state.mde))}</td></tr>
+        <tr><td>Нужный объём на вариант под этот MDE</td><td class="num">${num(d.need)}</td></tr>
         <tr><td>Трафик в вариант B в день</td><td class="num">${num(d.perVariant.B)}</td></tr>
-        <tr class="hl"><td>Срок теста</td><td class="num">≈ ${d.daysNeeded} дн.</td></tr>
-        <tr><td>Мощность при таком MDE</td><td class="num">${pct(d.power, 1)}</td></tr>
-        <tr><td>Реальный MDE при этом размере выборки</td><td class="num">${pct(
-          mdeForProportion(d.baseline, d.need, POWER_TARGET, state.alpha),
-          2
-        )}</td></tr>
+        <tr><td>Срок по объёму данных</td><td class="num">≈ ${d.daysForSample} дн.</td></tr>
+        <tr><td>Минимум из-за недельной цикличности</td><td class="num">${MIN_DAYS} дн.</td></tr>
+        <tr class="hl"><td>Плановый срок теста</td><td class="num">≈ ${d.days} дн.</td></tr>
+      </table>
+
+      <h3>Что получится на самом деле</h3>
+      <p>Симулятор проводит тест ровно ${days(scenario.durationDays)} — объём данных задаётся сроком,
+      а не вашим MDE. Вот что из этого следует.</p>
+      <table>
+        <tr><td>Данных на вариант за ${days(scenario.durationDays)}</td>
+        <td class="num">${num(d.actualSample)}</td></tr>
+        <tr><td>Нужно под ваш MDE ${mdePercent}%</td>
+        <td class="num ${d.actualSample >= d.need ? 'pos' : 'neg'}">${num(d.need)}</td></tr>
+        <tr class="hl"><td>Мощность на вашем MDE</td>
+        <td class="num ${d.powerAtChosen >= POWER_TARGET ? 'pos' : 'neg'}">${pct(d.powerAtChosen, 1)}</td></tr>
+        <tr><td>Типичный эффект в этой задаче (о нём вы не знаете)</td>
+        <td class="num">${pct(d.trueMde, 1)}</td></tr>
+        <tr><td>Мощность на типичном эффекте</td>
+        <td class="num">${pct(d.powerOnTrue, 1)}</td></tr>
+        <tr><td>Эффект, который тест надёжно отличит от нуля</td>
+        <td class="num">${pct(d.mdeAchievable, 2)}</td></tr>
       </table>
       <div id="design-msg"></div>
       <div class="row">
@@ -332,35 +395,62 @@ function screenDesign() {
 }
 
 function designWarnings() {
-  const scenario = getScenario(state.scenarioId);
   const d = design();
   const out = [];
-  // Знак эффекта не важен для оценки MDE — важен его размер
-  const trueMde = Math.abs(realizedConversionLift(scenario));
+  const trueMde = d.trueMde;
 
   if (state.mde < trueMde / 3) {
     const ratio = (trueMde / state.mde) ** 2;
     out.push(
-      `<div class="note warn">MDE ${pct(state.mde, 1)} в ${(trueMde / state.mde).toFixed(
-        1
-      )} раза мельче, чем типичный эффект в этой задаче. Тест станет в ~${ratio.toFixed(
-        0
-      )} раз длиннее при том же риске. Формула чувствительна к квадрату MDE: уменьшение в 2 раза = ×4 по трафику.</div>`
+      `<div class="note warn"><b>MDE ${pct(state.mde, 1)} — мельче, чем нужно.</b> Типичный эффект
+      здесь около ${pct(trueMde, 1)}, то есть вы гонитесь за изменением, которого не бывает.
+      Формула чувствительна к квадрату MDE: уменьшение порога вдвое стоит примерно в
+      ${ratio.toFixed(0)} раз больше трафика. Дешевле объявить MDE ${pct(trueMde, 1)}.</div>`
     );
   }
+
   if (state.mde > trueMde * 2) {
     out.push(
-      `<div class="note warn">Вы объявили MDE ${pct(state.mde, 1)}, а типичный эффект здесь около
-      ${pct(trueMde, 1)}. Мощность ${pct(d.power, 1)} вместо ${pct(POWER_TARGET, 0)}:
-      реальный эффект вы можете <b>не заметить</b> и сделать ложный вывод «изменений нет».</div>`
+      `<div class="note warn"><b>MDE ${pct(state.mde, 1)} — выше типичного эффекта
+      (около ${pct(trueMde, 1)}).</b> Формула тут ни при чём: под ваш заявленный порог данных хватает
+      с запасом (мощность ${pct(d.powerAtChosen, 0)}). Проблема в решении. Если реальный эффект
+      окажется ${pct(trueMde, 1)}, p-value будет крошечным — изменение статистически значимо,
+      но не проходит вашу же планку в ${pct(state.mde, 1)}, и его сворачивают.
+      Либо, если данных не хватит, вы честно не заметите эффект и сделаете вывод «изменений нет»,
+      хотя он есть.
+      <br><br>Заявленный MDE — это обещание, зафиксированное <b>до</b> старта. Двигать его после
+      того, как данные посмотрены, — самая дорогая ошибка в A/B-тестировании.</div>`
     );
   }
+
+  if (d.powerOnTrue < POWER_TARGET) {
+    const missPct = Math.round((1 - d.powerOnTrue) * 100);
+    out.push(
+      `<div class="note bad"><b>Данных не хватит для типичного эффекта.</b> За ${days(
+        d.scenario.durationDays
+      )} на вариант наберётся ${num(d.actualSample)} наблюдений. Эффект ${pct(
+        trueMde,
+        1
+      )} этот тест поймает лишь примерно в ${Math.round(
+        d.powerOnTrue * 100
+      )} случаях из 100 — в остальных ${missPct} вы увидите «разницы нет» и решите, что
+      изменения не работает. Надёжно отличить от нуля можно только эффект от ${pct(
+        d.mdeAchievable,
+        1
+      )}.
+      Решения: продлить срок, увеличить долю трафика на B или признать, что такой эффект
+      вы принципиально не измерите.</div>`
+    );
+  }
+
   if (state.shareB < 0.5) {
     out.push(
-      `<div class="note">Доля B = ${pct(state.shareB, 0)}. Это законно, но вариант B будет копить данные
-      в ${(0.5 / state.shareB).toFixed(1)} раза медленнее — тест растянется на ${d.daysNeeded} дней.</div>`
+      `<div class="note">Доля B = ${pct(state.shareB, 0)}. Это законно, но вариант B копит данные
+      в ${(0.5 / state.shareB).toFixed(1)} раза медленнее: за ${days(d.scenario.durationDays)}
+      он наберёт ${num(d.actualSample)} наблюдений вместо необходимых ${num(d.need)}.</div>`
     );
   }
+
   if (state.alpha > 0.05) {
     out.push(
       `<div class="note bad">α = ${state.alpha}: примерно каждый ${(1 / state.alpha).toFixed(
@@ -369,9 +459,17 @@ function designWarnings() {
       он определяет вашу долю ложных побед.</div>`
     );
   }
+
   if (out.length === 0) {
-    out.push(`<div class="note good">Расчёт выглядит разумным: мощность ${pct(d.power, 1)},
-      срок ≈ ${d.daysNeeded} дн. Запускайте.</div>`);
+    out.push(
+      `<div class="note good"><b>Дизайн рабочий.</b> Данных хватает (${num(
+        d.actualSample
+      )} на вариант против необходимых ${num(d.need)}), надёжно различимый эффект —
+      ${pct(d.mdeAchievable, 1)}, типичный эффект будет пойман с мощностью ${pct(
+        d.powerOnTrue,
+        1
+      )}. Плановый срок ≈ ${days(d.days)}.</div>`
+    );
   }
   return out.join('');
 }
@@ -887,12 +985,15 @@ function collectIssues(scenario, snap, expected) {
   }
 
   // --- дизайн
+  const d = design();
   if (state.mde > trueMde * 2) {
-    const p = powerForProportion(scenario.baselineConversion, state.mde, design().need, state.alpha);
     out.push({
       type: 'err',
       h: `MDE завышен в ${(state.mde / trueMde).toFixed(1)} раза`,
-      b: `Мощность теста ${pct(p, 0)} против целевых 80%. Такой тест не имеет права делать вывод «эффекта нет» — он просто не видел эффект.`,
+      b: `Вы объявили порог ${pct(state.mde, 1)}, а типичный эффект здесь около ${pct(trueMde, 1)}.
+        Тест закончен формально (под заявленный MDE мощность ${pct(d.powerAtNeeded, 0)}), но настоящий
+        эффект он заметил бы лишь с вероятностью ${pct(d.powerOnTrue, 0)}. Такой тест не имеет права
+        делать вывод «эффекта нет» — он просто его не видел.`,
     });
   } else if (state.mde < trueMde / 3) {
     out.push({
@@ -904,10 +1005,8 @@ function collectIssues(scenario, snap, expected) {
     out.push({
       type: 'ok',
       h: 'MDE выбран осмысленно',
-      b: `${pct(state.mde, 1)} — разумная граница значимости для этой задачи, мощность около ${pct(
-        design().power,
-        0
-      )}.`,
+      b: `${pct(state.mde, 1)} — разумная граница значимости для этой задачи: типичный эффект
+        (${pct(trueMde, 1)}) этот тест поймал с мощностью ${pct(d.powerOnTrue, 0)}.`,
     });
   }
 

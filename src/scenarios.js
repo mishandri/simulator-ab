@@ -63,7 +63,7 @@ export const SCENARIOS = [
     goodPrimary: ['conversion'],
     guardrails: ['arpu'],
     // Реальные параметры продукта
-    trafficPerDay: 20000,
+    trafficPerDay: 1500,
     baselineConversion: 0.1,
     baselineCtr: 0.24,
     baselineRevenuePerUser: 45,
@@ -92,7 +92,7 @@ export const SCENARIOS = [
     seed: 424242,
     goodPrimary: ['arpu'],
     guardrails: ['conversion'],
-    trafficPerDay: 20000,
+    trafficPerDay: 1500,
     baselineConversion: 0.1,
     baselineCtr: 0.22,
     baselineRevenuePerUser: 45,
@@ -121,7 +121,7 @@ export const SCENARIOS = [
     // CTR — прокси-метрика: выросла сильно, а покупки почти не изменились
     goodPrimary: ['conversion', 'arpu'],
     guardrails: ['arpu'],
-    trafficPerDay: 18000,
+    trafficPerDay: 2500,
     baselineConversion: 0.06,
     baselineCtr: 0.19,
     baselineRevenuePerUser: 30,
