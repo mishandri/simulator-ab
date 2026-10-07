@@ -134,6 +134,14 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
   font-size: 11px;
   vertical-align: 1px;
 }
+/* Пометка на недействительных метриках при SRM */
+.tag.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+  margin-left: 6px;
+  font-size: 10.5px;
+  vertical-align: 1px;
+}
 .opt .d { font-size: 13px; color: var(--fg-dim); margin-top: 2px; }
 
 /* ---------- блок параметров теста ---------- */

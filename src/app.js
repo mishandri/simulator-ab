@@ -99,7 +99,9 @@ const state = {
   speed: REVEAL_MS,
   peekOffered: false,
   stoppedAt: null,
-  earlySnap: null,
+earlySnap: null,
+  srmFlagged: false,
+  srmStop: false,
   beforeExtend: null,
   extendedDays: 0,
   decision: null,
@@ -269,7 +271,9 @@ function backToMetric() {
   state.speed = REVEAL_MS;
   state.peekOffered = false;
   state.stoppedAt = null;
-  state.earlySnap = null;
+state.earlySnap = null;
+  state.srmFlagged = false;
+  state.srmStop = false;
   state.beforeExtend = null;
   state.extendedDays = 0;
   state.decision = null;
@@ -1012,6 +1016,8 @@ function startExperiment() {
   state.peekOffered = false;
   state.stoppedAt = null;
   state.earlySnap = null;
+  state.srmFlagged = false;
+  state.srmStop = false;
   state.step = 3;
   render();
   state.timer = setInterval(tick, state.speed);
@@ -1024,19 +1030,37 @@ function stopTimer() {
 
 function tick() {
   state.revealed += 1;
-  if (state.revealed >= state.sim.days.length) {
+  const total = state.sim.days.length;
+  if (state.revealed >= total) {
     stopTimer();
     state.step = 4;
     render();
     return;
   }
-  if (state.revealed >= peekDay(state.sim.days.length) && !state.peekOffered) {
+  // Как только вскрывается SRM, останавливаемся: звать «может, выкатим?» после
+  // слов «тест недостоверен» — противоречие. Дальше смотреть не на что.
+  if (srmDetected() && !state.srmFlagged) {
+    state.srmFlagged = true;
+    state.peekOffered = false;
+    stopTimer();
+    renderStep();
+    return;
+  }
+  if (state.revealed >= peekDay(total) && !state.peekOffered && !state.srmFlagged) {
     state.peekOffered = true;
     stopTimer();
     renderStep();
     return;
   }
   renderStep();
+}
+
+/** Вскрылся ли SRM на уже накопленных данных. */
+function srmDetected() {
+  if (!state.sim) return false;
+  const scenario = getScenario(state.scenarioId);
+  const snap = snapshot(scenario, state.sim.days.slice(0, state.revealed));
+  return snap.srm.srm;
 }
 
 // ============================================================ шаг 3: наблюдение
@@ -1048,11 +1072,12 @@ function screenObserve() {
   const cum = cumulativeByDay(state.sim.days).slice(0, state.revealed);
   const res = primaryResult(scenario, snap);
   const guard = guardrailCheck(scenario, snap);
-  const total = state.sim.days.length;
+const total = state.sim.days.length;
   const peekAt = peekDay(total);
   // Доля теста, к которой уже накопились данные — то, на что вы смотрите
   const share = peekAt / total;
   const shareText = `${Math.round(share * 100)}%`;
+  const srm = snap.srm.srm;
 
   const peek = state.peekOffered
     ? `<div class="note bad"><b>Руководитель прибежал с вопросом.</b>
@@ -1086,17 +1111,19 @@ function screenObserve() {
       <h3>Текущие цифры</h3>
       <table>
         <tr><th>Метрика</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th><th class="num">p</th></tr>
-        ${metricRow('ctr', snap, state.primary === 'ctr')}
-        ${metricRow('conversion', snap, state.primary === 'conversion')}
-        ${metricRow('arpu', snap, state.primary === 'arpu')}
+        ${metricRow('ctr', snap, state.primary === 'ctr', srm)}
+        ${metricRow('conversion', snap, state.primary === 'conversion', srm)}
+        ${metricRow('arpu', snap, state.primary === 'arpu', srm)}
         <tr>
           <td>Распределение трафика (SRM)</td>
           <td class="num">${pct(1 - snap.shareB, 1)}</td>
           <td class="num">${pct(snap.shareB, 1)}</td>
-          <td class="num ${snap.srm.srm ? 'neg' : 'muted'}">χ²=${snap.srm.chi2.toFixed(2)}</td>
-          <td class="num ${snap.srm.srm ? 'neg' : 'muted'}">${snap.srm.srm ? 'нарушение' : 'ок'}</td>
+          <td class="num ${srm ? 'neg' : 'muted'}">χ²=${snap.srm.chi2.toFixed(2)}</td>
+          <td class="num ${srm ? 'neg' : 'muted'}">${srm ? 'нарушение' : 'ок'}</td>
         </tr>
       </table>
+      ${srm ? '<p class="muted" style="font-size:13px">Ожидалось по настройке: A — ' +
+        `${pct(1 - state.shareB, 1)}, B — ${pct(state.shareB, 1)}.</p>` : ''}
       ${
         guard.broken
           ? `<div class="note bad"><b>Гвардрайл сломан.</b> «${escapeHtml(
@@ -1107,19 +1134,41 @@ function screenObserve() {
           : ''
       }
       ${
-        snap.srm.srm
-          ? `<div class="note bad"><b>Sample Ratio Mismatch.</b> Доли трафика не сходятся с
-        настройкой. Так бывает, когда бакетер отдаёт часть пользователей только одному варианту
-        (баг, фильтр, различия в клиентском SDK). Дальше считать эффект бессмысленно — сначала чинить.</div>`
+        guard.broken && !snap.srm.srm
+          ? `<div class="note bad"><b>Гвардрейл сломан.</b> «${escapeHtml(
+              METRICS[guard.id].label
+            )}» упал на ${signed(guard.res.relLift)} — это больше зафиксированного порога
+            ${pct(GUARDRAIL_DROP, 0)}. По заранее согласованному правилу такую выкатку не проводят,
+            сколько бы ни выросла основная метрика.</div>`
           : ''
       }
-      <div class="note ${res.significant ? 'warn' : ''}">По выбранной основной метрике
-      (<b>${escapeHtml(METRICS[state.primary].label)}</b>): изменение ${signed(res.relLift)}.
-      <b>Вывод:</b> ${verdictText(res)}.</div>
-      ${peek}
-      <div class="row">
-        <button id="fast" ${state.timer ? '' : 'disabled'}>Ускорить ×5</button>
-      </div>
+      ${
+        // При SRM все метрики ниже — недостоверны. Говорить про p-value и
+        // предлагать «выкатим?» после слов «дальше считать бессмысленно»
+        // было бы прямой ошибкой, поэтому при нарушении ловушки и вывода нет
+        snap.srm.srm
+          ? `<div class="note bad"><b>Sample Ratio Mismatch: тест недостоверен.</b>
+        В вариант B попало ${pct(snap.shareB, 1)} трафика вместо запланированных
+        ${pct(state.shareB, 1)} — расхождение не случайно (χ² = ${snap.srm.chi2.toFixed(
+              2
+            )}, p ${formatPExpr(snap.srm.pValue)}).
+        <br><br>Обычные причины: баг в бакетере, фильтр по устройству, разные версии SDK,
+        потеря событий на одной из сторон.
+        <br><br><b>Все метрики выше недействительны.</b> При неверном распределении групп
+        сравнивать их нельзя: неизвестно, что именно попало в вариант B. Прекратите тест
+        и чините рандомизацию — продолжать бессмысленно, а принимать решение по этим
+        цифрам опасно. Воспроизведите проверку до повторного запуска.</div>
+        <div class="row">
+          <button class="danger" id="stopNow">Остановить тест из-за SRM</button>
+        </div>`
+          : `<div class="note ${res.significant ? 'warn' : ''}">По выбранной основной метрике
+        (<b>${escapeHtml(METRICS[state.primary].label)}</b>): изменение ${signed(res.relLift)}.
+        <b>Вывод:</b> ${verdictText(res)}.</div>
+        ${peek}
+        <div class="row">
+          <button id="fast" ${state.timer ? '' : 'disabled'}>Ускорить ×5</button>
+        </div>`
+      }
     </div>`;
 }
 
@@ -1141,10 +1190,18 @@ function wireObserve() {
       renderStep();
     };
   }
-  const stop = $('#stopNow');
+const stop = $('#stopNow');
   if (stop) {
     stop.onclick = () => {
       stopTimer();
+      // Остановка из-за SRM — это не решение по данным, а признание, что
+      // данных нет. Засчитывать её как раннюю остановку нельзя: там другой урок.
+      if (state.srmFlagged) {
+        state.srmStop = true;
+        state.step = 4;
+        render();
+        return;
+      }
       state.stoppedAt = state.revealed;
       const shown = state.sim.days.slice(0, state.stoppedAt);
       state.earlySnap = snapshot(getScenario(state.scenarioId), shown);
@@ -1156,19 +1213,27 @@ function wireObserve() {
 
 // ============================================================ график
 
-/** Строка таблицы для одной метрики: значения A/B, изменение и p-value. */
-function metricRow(metricId, snap, isPrimary) {
+/**
+ * Строка таблицы для одной метрики.
+ * При SRM значения показаны, но помечены как недействительные: аналитик видит
+ * цифры и одновременно видит, что принимать по ним решение нельзя. Молча
+ * скрывать колонки значило бы прятать от пользователя сам диагностический признак.
+ */
+function metricRow(metricId, snap, isPrimary, srm = false) {
   const res = metricResult(metricId, snap);
   const isMean = metricId === 'arpu';
   const fmt = isMean ? money : (v) => pct(v);
   const valA = isMean ? res.meanA : res.pa;
   const valB = isMean ? res.meanB : res.pb;
-  return `<tr${isPrimary ? ' class="hl"' : ''}>
-          <td>${escapeHtml(METRICS[metricId].label)}${isPrimary ? ' — основная' : ''}</td>
+  const dim = srm ? ' style="opacity:.45"' : '';
+  return `<tr${isPrimary ? ' class="hl"' : ''}${dim}>
+          <td>${escapeHtml(METRICS[metricId].label)}${isPrimary ? ' — основная' : ''}${
+    srm ? ' <span class="tag warn">недействительно</span>' : ''
+  }</td>
           <td class="num">${fmt(valA)}</td>
           <td class="num">${fmt(valB)}</td>
           <td class="num ${cls(res.relLift)}">${signed(res.relLift)}</td>
-          <td class="num">${formatP(res.pValue)}</td>
+          <td class="num">${srm ? '—' : formatP(res.pValue)}</td>
         </tr>`;
 }
 
@@ -1230,7 +1295,8 @@ function screenDecision() {
   const snap = snapshot(scenario, shown);
   const res = primaryResult(scenario, snap);
   const guard = guardrailCheck(scenario, snap);
-  const early = state.stoppedAt !== null && state.stoppedAt < state.sim.days.length;
+  const early = !state.srmStop && state.stoppedAt !== null && state.stoppedAt < state.sim.days.length;
+  const srmStop = state.srmStop;
 
   const finalSnap = snapshot(scenario, state.sim.days);
   const finalRes = primaryResult(scenario, finalSnap);
@@ -1250,10 +1316,24 @@ function screenDecision() {
         }</div>`
     : '';
 
+  const srmStopBlock = srmStop
+    ? `<div class="note bad"><b>Тест остановлен из-за нарушения рандомизации, а не из-за результата.</b>
+        На ${state.revealed}-м дне из ${state.sim.days.length} доли трафика разошлись:
+        в B попало ${pct(snap.shareB, 1)} вместо ${pct(state.shareB, 1)}
+        (χ² = ${snap.srm.chi2.toFixed(2)}, p ${formatPExpr(snap.srm.pValue)}).
+        <br><br>Сравнивать метрики в разошедшихся группах нельзя: неизвестно, что именно
+        попало в вариант B. Правильное действие одно — остановиться и чинить бакетер.
+        Никакое решение о выкатке по этим данным принять нельзя, даже если цифры выглядят
+        убедительно.</div>`
+    : '';
+
   return `
     <div class="card">
       <h2>Шаг 5. Решение</h2>
-      <p class="lead">Все ${state.revealed} дней собраны. Что делаем с вариантом B?</p>
+      <p class="lead">${srmStop
+        ? 'Тест прерван на ' + state.revealed + '-м дне.'
+        : `Все ${state.revealed} дней собраны. Что делаем с вариантом B?`}</p>
+      ${srmStopBlock}
       ${earlyBlock}
       ${resultTable(scenario, snap)}
       <h3>Итог статистики</h3>
@@ -1690,7 +1770,18 @@ function collectIssues(scenario, snap, expected) {
   }
 
   // --- остановка
-  if (state.stoppedAt !== null && state.stoppedAt < state.sim.days.length) {
+  if (state.srmStop) {
+    out.push({
+      type: 'ok',
+      h: 'Тест вскрыт на неверной рандомизации — это единственно верное действие',
+      b: `В вариант B попало ${pct(snap.shareB, 1)} трафика вместо ${pct(state.shareB, 1)}:
+        χ² = ${snap.srm.chi2.toFixed(2)}, p ${formatPExpr(snap.srm.pValue)}. При неверном составе
+        групп сравнение метрик бессмысленно, сколько бы убедительными ни выглядели цифры.
+        Остановиться и починить бакетер — верно; продолжить и объявить победителя — нет.
+        В реальных командах такую остановку делают по раздражителю в мониторинге, а не
+        по догадкам: SRM проверяется до чтения метрик.`,
+    });
+  } else if (state.stoppedAt !== null && state.stoppedAt < state.sim.days.length) {
     const full = primaryResult(scenario, snap);
     const falsePositiveChance = 1 - Math.pow(1 - state.alpha, state.stoppedAt / 3);
     out.push({
@@ -1713,10 +1804,16 @@ function collectIssues(scenario, snap, expected) {
   // --- SRM
   if (snap.srm.srm) {
     out.push({
-      type: 'err',
-      h: `Нарушение SRM: в B попало ${pct(snap.shareB, 1)} трафика вместо ${pct(state.shareB, 1)}`,
+      type: state.srmStop ? 'ok' : 'err',
+      h: state.srmStop
+        ? 'Рандомизация вскрыта, тест остановлен'
+        : `Нарушение SRM: в B попало ${pct(snap.shareB, 1)} трафика вместо ${pct(state.shareB, 1)}`,
       b: `χ² = ${snap.srm.chi2.toFixed(2)}, p ${formatPExpr(snap.srm.pValue)}. Обычные причины: баг в рандомайзере,
-        несовпадение версий SDK, потеря событий на стороне B. Сравнение метрик при SRM бессмысленно — сначала чинить пайплайн.`,
+        несовпадение версий SDK, потеря событий на стороне B. ${
+        state.srmStop
+          ? 'Вы остановили тест — это ровно то, что здесь требовалось: при неверном составе групп сравнение метрик бессмысленно.'
+          : 'Сравнение метрик при SRM бессмысленно — сначала чинить пайплайн, а не читать метрики.'
+      }`,
     });
   } else {
     out.push({
@@ -1835,7 +1932,9 @@ function startScenario(id) {
   state.speed = REVEAL_MS;
   state.peekOffered = false;
   state.stoppedAt = null;
-  state.earlySnap = null;
+state.earlySnap = null;
+  state.srmFlagged = false;
+  state.srmStop = false;
   state.beforeExtend = null;
   state.extendedDays = 0;
   state.decision = null;
