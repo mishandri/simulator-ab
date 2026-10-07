@@ -70,7 +70,7 @@ const DEFAULT_MDE = 0.1;
 const DEFAULT_SHARE = 0.5;
 const DEFAULT_ALPHA = 0.05;
 const DEFAULT_DAYS = 21;
-/** Метрики-кандидаты на роль гвардрайла, если сценарные не подходят. */
+/** Метрики-кандидаты на роль гвардрейла, если сценарные не подходят. */
 const DEFAULT_GUARDRAILS = ['arpu', 'conversion'];
 const REVEAL_MS = 260;
 
@@ -132,6 +132,9 @@ function cls(x) {
   return x > 0 ? 'pos' : x < 0 ? 'neg' : 'muted';
 }
 
+/** Глагол, согласованный с родом названия метрики: «конверсия упала», «CTR упал». */
+const fell = (id) => (METRICS[id]?.gender === 'f' ? 'упала' : 'упал');
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
@@ -139,11 +142,19 @@ function escapeHtml(s) {
 /**
  * Всплывающая подсказка для новичка.
  * `align` — сторона, к которой прижимать карточку у края экрана.
+ *
+ * Кружок сделан настоящей кнопкой, а не картинкой: иначе он не попадает в
+ * дерево доступности, его нельзя нажать с клавиатуры и он не раскрывается
+ * по тапу на телефоне. Подсказка связана с кнопкой через aria-describedby,
+ * поэтому её читает и скринридер.
  */
+let tipSeq = 0;
 function tip(title, body, align = '') {
-  return `<span class="tip-wrap ${align}" tabindex="0" role="note" aria-label="${escapeHtml(title)}">
-      <span class="tip" aria-hidden="true">?</span>
-      <span class="tip-body"><b>${escapeHtml(title)}.</b> ${body}</span>
+  const id = `tipbody-${++tipSeq}`;
+  return `<span class="tip-wrap ${align}">
+      <button type="button" class="tip" aria-expanded="false" aria-describedby="${id}"
+        aria-label="Пояснение: ${escapeHtml(title)}">?</button>
+      <span class="tip-body" id="${id}" role="tooltip"><b>${escapeHtml(title)}.</b> ${body}</span>
     </span>`;
 }
 
@@ -152,9 +163,9 @@ const GLOSSARY = {
   mde: {
     title: 'MDE — минимальный детектируемый эффект',
     body: `Наименьшее изменение, ради которого стоит запускать тест. Объявляется <b>до старта</b>
-      и превращается в обязательный порог: «эффект меньше ${'X'}% нас не интересует».
-      Чем мельче MDE, тем больше данных нужно — объём растёт как 1/MDE², то есть
-      уменьшение порога вдвое стоит примерно вчетверо дороже.`,
+      и превращается в обязательный порог: «изменение меньше заявленного нас не интересует,
+      и мы его не заметим». Чем мельче MDE, тем больше данных нужно — объём растёт как 1/MDE²,
+      то есть уменьшение порога вдвое стоит примерно вчетверо дороже.`,
   },
   power: {
     title: 'Мощность — вероятность поймать эффект',
@@ -165,7 +176,7 @@ const GLOSSARY = {
   alpha: {
     title: 'α — уровень значимости',
     body: `Порог допустимой вероятности ошибиться: «считать разницу значимой, если она
-      случайно возникла с вероятностью не больше ${'α'}». При α = 0.05 примерно каждый
+      случайно возникла с вероятностью не больше α». При α = 0.05 примерно каждый
       двадцатый «выигранный» тест оказывается ложным.`,
   },
   traffic: {
@@ -259,12 +270,12 @@ function primaryResult(scenario, snap) {
 }
 
 /**
- * Проверка гвардрайла: главная метрика может расти, но «сломать» гвардрайл нельзя.
+ * Проверка гвардрейла: главная метрика может расти, но «сломать» гвардрейл нельзя.
  * Порог падения задан явно (GUARDRAIL_DROP), чтобы решение ученика опиралось
  * на зафиксированное правило, а не на интуицию.
  */
 function guardrailCheck(scenario, snap) {
-  // Гвардрайл не может совпадать с основной метрикой: гвардрайл ограничивает вред,
+  // Гвардрейл не может совпадать с основной метрикой: гвардрейл ограничивает вред,
   // а решение принимается по основной. Иначе правило превращается в абсурд
   // «основная метрика выросла, но нельзя выкатывать, потому что выросла».
   const candidates = [...scenario.guardrails, ...DEFAULT_GUARDRAILS];
@@ -309,7 +320,7 @@ function metricProblem(scenario) {
 
   if (scenario.guardrails.includes(id)) {
     return {
-      title: `Данная метрика является гвардрейл — её нельзя было выбирать в качестве основной`,
+      title: `«${label}» в этом сценарии стоит под гвардрейлом — основной её быть не может`,
       body: `«${label}» у этого продукта стоит под защитой: она нужна, чтобы поймать вред, а не
         чтобы рапортовать об успехе. Выбирая её основной, вы получили правило, которое читается
         абсурдно: «основная метрика выросла, но выкатывать нельзя, потому что выросло то, что
@@ -332,6 +343,34 @@ function metricProblem(scenario) {
   return null;
 }
 
+/**
+ * Структурное противоречие в выборе метрики — то, что видно из условий
+ * задачи, не зная ответа.
+ *
+ * Единственный такой случай: выбранная основная метрика уже занята под
+ * гвардрейл этого сценария. Одна метрика не может одновременно быть и тем,
+ * по чему выносят решение, и тем, что ограничивает вред: правило выката
+ * становится абсурдным («выросло то, что и так должно было расти»).
+ *
+ * Обратная ситуация — прокси вместо бизнес-метрики — не разбирается здесь:
+ * это спор о постановке вопроса, а не факт, и подсказать ответ заранее
+ * значит испортить задачу. Про неё разбор говорит на шаге «Решение».
+ */
+function metricProblemStructural(scenario) {
+  const id = state.primary;
+  if (!scenario || !id || !scenario.guardrails.includes(id)) return '';
+  const label = escapeHtml(METRICS[id].label);
+  return `<div class="note bad"><b>Основная метрика уже занята под гвардрейл.</b>
+      «${label}» в этом сценарии защищает продукт от вреда, а решение о выкатке
+      принимают по основной метрике. Если взять «${label}» основной, правило
+      выката получится таким: «метрика выросла — но выкатывать нельзя, потому что
+      выросло то, что и так должно было расти».
+      <br><br>Это видно из условий задачи, а не из ответа на неё: вернуться и
+      перевыбрать можно, не потратив прогон.</div>
+    <div class="row"><button class="primary" id="back-metric-design">
+      Вернуться к шагу 2. Метрика</button></div>`;
+}
+
 /** Блок ошибки выбора метрики с возвратом на шаг 2. */
 function metricProblemHtml(scenario) {
   const problem = metricProblem(scenario);
@@ -343,6 +382,64 @@ function metricProblemHtml(scenario) {
         <button class="primary" id="back-metric">Вернуться к шагу 2. Метрика</button>
       </div>
     </div>`;
+}
+
+/**
+ * Открытие подсказки по клику: на тач-экранах и трекпадах наведения нет,
+ * а одного наведения мало. Открытая подсказка закрывается кликом по ней,
+ * повторным кликом, по Escape или кликом снаружи.
+ *
+ * Слушатель один и делегированный на контейнер экрана: подсказок на шаге
+ * дизайна пять, а раньше обработчик вешался только на первую — остальные
+ * кружки молчали. Экран перерисовывается целиком, поэтому вешать обработчик
+ * заново после каждого рендера тоже нельзя, повесил бы десяток копий.
+ */
+function wireTips() {
+  if (app.dataset.tipBound) return;
+  app.dataset.tipBound = '1';
+
+  app.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tip');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const wrap = btn.closest('.tip-wrap');
+    const isOpen = wrap.classList.contains('open');
+    closeTips();
+    if (!isOpen) {
+      wrap.classList.add('open');
+      btn.setAttribute('aria-expanded', 'true');
+      btn.focus();
+    }
+  });
+
+  app.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const wrap = app.querySelector('.tip-wrap.open');
+    if (!wrap) return;
+    const btn = wrap.querySelector('.tip');
+    closeTips();
+    if (btn) btn.focus();
+  });
+}
+
+function closeTips() {
+  app.querySelectorAll('.tip-wrap.open').forEach((el) => {
+    el.classList.remove('open');
+    const b = el.querySelector('.tip');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  });
+}
+
+// Клик вне подсказки закрывает её
+if (!document.body.dataset.tipBound) {
+  document.body.dataset.tipBound = '1';
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest || !e.target.closest('.tip-wrap')) closeTips();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeTips();
+  });
 }
 
 /** Сброс прогона: данные, таймер и признаки остановки. Дизайн не трогаем. */
@@ -617,6 +714,7 @@ function renderStep() {
 }
 
 function afterRender() {
+  wireTips();
   if (state.step === 0) wireHypothesis();
   if (state.step === 1) wireMetric();
   if (state.step === 2) wireDesign();
@@ -754,7 +852,7 @@ function screenMetric() {
     <div class="card">
       <h2>Шаг 2. Метрика</h2>
       <p class="lead">Выберите <b>основную метрику</b> — ту, по которой вы примете решение о выкатке.
-      Всё остальное — гвардрайлы: их нельзя сломать, даже если основная метрика растёт.</p>
+      Всё остальное — гвардрейлы: их нельзя сломать, даже если основная метрика растёт.</p>
       <div class="note">Роль метрики — основная или гвардрейл — команда решает <b>до запуска</b>,
       и это решение нигде не подписано. Ориентир для выбора — задайте себе три вопроса:</div>
       <div class="hypo-pair compact">
@@ -1043,6 +1141,8 @@ function updateDesign() {
   app.querySelector('[data-hint="alpha"]').innerHTML = alphaHint(d);
 
   $('#design-msg').innerHTML = designWarnings();
+  const backMetricDesign = $('#back-metric-design');
+  if (backMetricDesign) backMetricDesign.onclick = () => backToMetric();
   $('#calc-table tbody').innerHTML = calcRows(d, mdePercent);
   $('#reality-lead').innerHTML = `Объём данных задаёт срок, а не MDE: за ${days(d.duration)} на
     вариант наберётся ${num(d.actualSample)} наблюдений. Вот что из этого следует.`;
@@ -1055,6 +1155,10 @@ function updateDesign() {
     : `вернёт MDE ${pct(DEFAULT_MDE, 0)}, трафик ${pct(DEFAULT_SHARE, 0)}, срок ${DEFAULT_DAYS} дн. и α ${DEFAULT_ALPHA}`;
 
   $('#run').textContent = `Запустить тест на ${days(state.duration)} →`;
+
+  // Подсказки перерисовываются вместе с экраном, обработчики — заново
+  closeTips();
+  wireTips();
 }
 
 function isDesignDefault() {
@@ -1102,6 +1206,13 @@ function designWarnings() {
   const d = design();
   const out = [];
   const trueMde = d.trueMde;
+
+  // Предупреждение о выборе метрики ставим первым: остальные замечания
+  // относятся к числам, а это — к постановке вопроса. Проверяем только
+  // структурное противоречие (основная метрика объявлена гвардрейлом),
+  // оно видно из данных сценария и не подсказывает, какая метрика «правильная».
+  const structural = metricProblemStructural(getScenario(state.scenarioId));
+  if (structural) out.push(structural);
 
   if (state.mde < trueMde / 3) {
     const ratio = (trueMde / state.mde) ** 2;
@@ -1356,22 +1467,19 @@ const total = state.sim.days.length;
       </table>
       ${srm ? '<p class="muted" style="font-size:13px">Ожидалось по настройке: A — ' +
         `${pct(1 - state.shareB, 1)}, B — ${pct(state.shareB, 1)}.</p>` : ''}
-      ${
-        guard.broken
-          ? `<div class="note bad"><b>Гвардрайл сломан.</b> «${escapeHtml(
-              METRICS[guard.id].label
-            )}» упал на ${signed(guard.res.relLift)} — это больше зафиксированного порога
-            ${pct(GUARDRAIL_DROP, 0)}. По заранее согласованному правилу такую выкатку не проводят,
-            сколько бы ни выросла основная метрика.</div>`
-          : ''
-      }
-      ${
+        ${
+        // Заметку про сломанный гвардрейл показываем только когда результаты вообще можно читать: при SRM
+        // все метрики недостоверны, и упоминать о падении конверсии значит предъявлять несуществующий вывод.
+        // Блок был продублирован: одна копия печаталась всегда, вторая только без SRM,
+        // и на экране оставались два одинаковых сообщения подряд.
         guard.broken && !snap.srm.srm
           ? `<div class="note bad"><b>Гвардрейл сломан.</b> «${escapeHtml(
               METRICS[guard.id].label
-            )}» упал на ${signed(guard.res.relLift)} — это больше зафиксированного порога
+            )}» ${fell(guard.id)} на ${signed(guard.res.relLift)} — это больше зафиксированного порога
             ${pct(GUARDRAIL_DROP, 0)}. По заранее согласованному правилу такую выкатку не проводят,
-            сколько бы ни выросла основная метрика.</div>`
+            сколько бы ни выросла основная метрика.${
+              tip(GLOSSARY.guardrail.title, GLOSSARY.guardrail.body, ' right')
+            }</div>`
           : ''
       }
       ${
@@ -1391,7 +1499,7 @@ const total = state.sim.days.length;
         и чините рандомизацию — продолжать бессмысленно, а принимать решение по этим
         цифрам опасно. Воспроизведите проверку до повторного запуска.</div>
         <div class="row">
-          <button class="danger" id="stopNow">Остановить тест из-за SRM</button>
+          <button class="danger" id="stopSrm">Остановить тест из-за SRM</button>
         </div>`
           : `<div class="note ${res.significant ? 'warn' : ''}">По выбранной основной метрике
         (<b>${escapeHtml(METRICS[state.primary].label)}</b>): изменение ${signed(res.relLift)}.
@@ -1422,18 +1530,23 @@ function wireObserve() {
       renderStep();
     };
   }
-const stop = $('#stopNow');
+  // У двух кнопок было id="stopNow": одна — ранняя остановка по воле ученика,
+  // вторая — остановка из-за SRM. Одновременно они не рендерятся, но дублировать
+  // идентификатор в одном документе нельзя, и любой поиск по id давал бы
+  // неоднозначный результат.
+  const stopSrm = $('#stopSrm');
+  if (stopSrm) {
+    stopSrm.onclick = () => {
+      stopTimer();
+      state.srmStop = true;
+      state.step = 4;
+      render();
+    };
+  }
+  const stop = $('#stopNow');
   if (stop) {
     stop.onclick = () => {
       stopTimer();
-      // Остановка из-за SRM — это не решение по данным, а признание, что
-      // данных нет. Засчитывать её как раннюю остановку нельзя: там другой урок.
-      if (state.srmFlagged) {
-        state.srmStop = true;
-        state.step = 4;
-        render();
-        return;
-      }
       state.stoppedAt = state.revealed;
       const shown = state.sim.days.slice(0, state.stoppedAt);
       state.earlySnap = snapshot(getScenario(state.scenarioId), shown);
@@ -1586,14 +1699,14 @@ function screenDecision() {
           <div class="kpi"><span>Выборка A / B</span><span class="v">${num(snap.t.visitors.A)} / ${num(
           snap.t.visitors.B
         )}</span></div>
-          <div class="kpi"><span>Гвардрайл: ${escapeHtml(METRICS[guard.id].label)}${tip(
+          <div class="kpi"><span>Гвардрейл: ${escapeHtml(METRICS[guard.id].label)}${tip(
             GLOSSARY.guardrail.title,
             GLOSSARY.guardrail.body,
             ' right'
           )}</span>
             <span class="v ${guard.broken ? 'neg' : cls(guard.res.relLift)}">${signed(guard.res.relLift)}</span></div>
-          <div class="kpi"><span>Гвардрайл p-value</span><span class="v">${formatP(guard.res.pValue)}</span></div>
-          <div class="kpi"><span>Порог падения гвардрайла</span>
+          <div class="kpi"><span>Гвардрейл p-value</span><span class="v">${formatP(guard.res.pValue)}</span></div>
+          <div class="kpi"><span>Порог падения гвардрейла</span>
             <span class="v">−${pct(GUARDRAIL_DROP, 0)} → ${
           guard.broken ? '<span class="neg">нарушен</span>' : 'ок'
         }</span></div>
@@ -1610,7 +1723,7 @@ function screenDecision() {
       </div>
       ${
         guard.broken
-          ? `<div class="note bad">По заранее зафиксированному правилу гвардрайл важнее основной метрики:
+          ? `<div class="note bad">По заранее зафиксированному правилу гвардрейл важнее основной метрики:
              падение «${escapeHtml(METRICS[guard.id].label)}» на ${signed(
             guard.res.relLift
           )} блокирует выкатку.</div>`
@@ -1738,6 +1851,14 @@ function screenDebrief() {
       <b>${score}</b>.</p>
       ${verdict}
       <h3>Что было в данных на самом деле</h3>
+      ${
+        finalSnap.srm.srm
+          ? `<div class="note bad"><b>Строки ниже показывают, что именно сломалось, а не
+             результат эксперимента.</b> Рандомизация нарушена, поэтому ни одна метрика
+             в этой таблице не может использоваться для решения. Читайте их как
+             описание поломки.</div>`
+          : ''
+      }
       <table>
         <tr><td>CTR: A → B</td>
         <td class="num">${pct(finalSnap.ctr.pa)} → ${pct(finalSnap.ctr.pb)}
@@ -1748,9 +1869,9 @@ function screenDebrief() {
         <td class="num ${cls(finalSnap.conv.relLift)}">${signed(finalSnap.conv.relLift)}</td></tr>
         <tr><td>p-value по конверсии на полных данных</td>
         <td class="num">${formatP(finalSnap.conv.pValue)}</td></tr>
-        <tr><td>Гвардрайл «выручка на сессию»</td>
-        <td class="num ${cls(finalSnap.arpu.relLift)}">${signed(finalSnap.arpu.relLift)}
-        (p ${formatPExpr(finalSnap.arpu.pValue)})</td></tr>
+        <tr><td>Гвардрейл «${escapeHtml(METRICS[guard.id].label)}»</td>
+        <td class="num ${cls(guard.res.relLift)}">${signed(guard.res.relLift)}
+        (p ${formatPExpr(guard.res.pValue)})${guard.broken ? ' — нарушен' : ''}</td></tr>
         <tr><td>Мощность теста на типичном эффекте ${pct(
           Math.abs(realizedConversionLift(scenario, actualDuration())),
           1
@@ -1776,6 +1897,7 @@ function screenDebrief() {
       }
       <h3>Ваш чек-лист</h3>
       <div class="issues">${issues.map(issueHtml).join('')}</div>
+      ${scenario.teachingNote ? brokenByDesign(scenario) : ''}
       ${scenario.teachingNote ? debriefNote(scenario, finalSnap) : ''}
       <div class="note">
         <b>Что стоит запомнить.</b>
@@ -1791,7 +1913,84 @@ function screenDebrief() {
     </div>`;
 }
 
-/** Финальный аккорд для сценариев с заведомо неизмеримым эффектом. */
+/**
+ * Почему в этом кейсе ломается всегда — разбор замысла сценария.
+ *
+ * Кейс про «тест, который выиграл на первой неделе». Задача в нём
+ * нечестная по построению: правильной комбинации параметров не существует,
+ * и ученик не может прийти к «тест прошёл» никаким выбором MDE, срока
+ * или доли трафика. Поэтому список поломок важен: он превращает
+ * ощущение «я что-то сделал не так» в понимание, что так устроены данные.
+ *
+ * Все числа берутся из сценария и расчёта, а не выдуманы: если сценарий
+ * переделают, текст пересчитается сам и не станет врать.
+ */
+function brokenByDesign(scenario) {
+  const d = design();
+  const t = scenario.truth;
+  const shortBy = num(1 / Math.max(d.powerOnTrue, 0.001));
+
+  const defects = [];
+
+  if (scenario.traps.srm) {
+    defects.push([
+      'Рандомизация сломана',
+      `в вариант B попадает ${pct(scenario.traps.srmShareB, 0)} трафика вместо 50%. Это не «вариант
+        B оказался удачнее», а «мы сравниваем две разные группы людей». Все метрики,
+        все p-value и все доверительные интервалы в таком тесте недостоверны, поэтому
+        правильный вывод — не «выкатывать», а «остановить и чинить рандомизацию».
+        Проверка SRM стоит первм пунктом в мониторинге именно потому, что обнаруживает
+        это в первый же день.`,
+    ]);
+  }
+
+  defects.push([
+    'Эффект физически не измерим',
+    `реальное изменение около ${pct(d.trueMde, 1)}, а данных у маркетплейса
+      ${num(scenario.trafficPerDay)} в день. Мощность — ${powerText(d.powerOnTrue)}: типичный
+      эффект этот тест поймает примерно в ${Math.round(
+      d.powerOnTrue * 100
+    )} случаях из 100. Поднять мощность до ${pct(POWER_TARGET, 0)} можно только
+      объёмом — а он требует ${num(d.sampleForTrue)} наблюдений на вариант, это
+      ${humanDays(Math.round(d.sampleForTrue / d.bottleneck))}. Данных примерно в
+      <b>${shortBy} раз</b> меньше нужного, и никакой MDE, срок или доля трафика
+      в пределах ползунка эту разницу не закроют.`,
+  ]);
+
+  defects.push([
+    'Эффект направлен против бизнеса',
+    `кликабельность растёт на ${signed(t.ctrLiftRel)} — ровно то, чего хотел заказчик, —
+      но вероятность купить после клика падает на ${signed(t.condConversionLiftRel)}.
+      Баннер приводит клики, которые не покупают. Именно поэтому CTR нельзя
+      ставить основной метрикой: по ней изменение «побеждает», по деньгам —
+      проигрывает, а гвардрейл по конверсии нарушается.`,
+  ]);
+
+  defects.push([
+    'Задача сформулирована прокси-метрикой',
+    `в брифе стоит «кликабельность вырастет», и тест, построенный под эту фразу,
+      честно подтверждает: кликабельность выросла. Ровно это и есть опасность
+      продуктовых метрик — они отвечают на заданный вопрос, а не на вопрос
+      «стало ли лучше».`,
+  ]);
+
+  return `<div class="note">
+      <b>Почему в этом кейсе всё ломается всегда.</b> Кейс собран так, что
+      правильной комбинации параметров не существует. Это не ошибка вашего решения —
+      это устройство задачи, и вот четыре поломки, каждая из которых
+      самостоятельно делает успешный тест невозможным.
+      <ul style="margin:8px 0 0;padding-left:20px">
+        ${defects
+          .map(([h, b]) => `<li style="margin-bottom:8px"><b>${h}.</b> ${b}</li>`)
+          .join('')}
+      </ul>
+      <br>Что из этого следует практически: сначала воспроизводится проверка
+      рандомизации на кухонном стенде, и только потом запускается тест. Если после
+      этого мощность всё ещё ${powerText(d.powerOnTrue)}, вопрос честно закрывается
+      как <b>«изменение не измеримо на нашем трафике»</b> — и это нормальный
+      результат, который экономит месяцы работы.</div>`;
+}
+
 /**
  * Финальный аккорд для сценариев с заведомо неизмеримым эффектом.
  *
@@ -1846,7 +2045,7 @@ function correctAction(scenario, snap) {
     return {
       action: 'hold',
       text: `не выкатывать: основная метрика «${METRICS[state.primary].label}» выросла, `
-        + `но гвардрайл «${METRICS[guard.id].label}» упал на ${signed(guard.res.relLift)} — `
+        + `но гвардрейл «${METRICS[guard.id].label}» ${fell(guard.id)} на ${signed(guard.res.relLift)} — `
         + `это больше зафиксированного порога в ${pct(GUARDRAIL_DROP, 0)}`,
     };
   }
@@ -2085,19 +2284,26 @@ function collectIssues(scenario, snap, expected) {
     });
   }
 
-  // --- гвардрайлы
+  // --- гвардрейлы
   const guard = guardrailCheck(scenario, snap);
   if (guard.broken) {
     out.push({
-      type: 'err',
-      h: `Гвардрайл «${METRICS[guard.id].label}» упал на ${signed(guard.res.relLift)}`,
-      b: `Порог, зафиксированный до старта, — ${pct(GUARDRAIL_DROP, 0)}. Даже при росте основной метрики
-        такое падение блокирует выкатку: классический случай «выкатили красивый график и испортили продукт».`,
+      // Сломанный гвардрейл — это следствие самого изменения, а не ошибка
+      // ученика. Раньше он попадал в тип err и пополнял счёт «Ошибок в
+      // процессе», хотя верное решение ученика как раз состояло в том, чтобы
+      // выкатку заблокировать. Поэтому тип miss: факт зафиксирован, но в
+      // список ошибок он не входит.
+      type: 'miss',
+      h: `Гвардрейл «${METRICS[guard.id].label}» ${fell(guard.id)} на ${signed(guard.res.relLift)}`,
+      b: `Случилось само изменение, а не ошибка в вашем плане. Порог, зафиксированный
+        до старта, — ${pct(GUARDRAIL_DROP, 0)}. Даже при росте основной метрики такое
+        падение блокирует выкатку: классический случай «выкатили красивый график и
+        испортили продукт».`,
     });
   } else {
     out.push({
       type: 'ok',
-      h: `Гвардрайл в допуске: ${signed(guard.res.relLift)}`,
+      h: `Гвардрейл в допуске: ${signed(guard.res.relLift)}`,
       b: `Падение меньше порога ${pct(GUARDRAIL_DROP, 0)} — выкатка по основной метрике допустима.`,
     });
   }

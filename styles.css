@@ -149,8 +149,14 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* Кружок — это <button>, поэтому на него действуют общие для кнопок
+     padding и min-width: auto. Как флекс-элемент он не сжимается ниже
+     своего содержимого, и без этих двух строк вместо круга выходил овал. */
+  padding: 0;
+  min-width: 0;
   width: 15px;
   height: 15px;
+  flex: 0 0 auto;
   margin-left: 6px;
   border: 1px solid var(--line);
   border-radius: 50%;
@@ -160,15 +166,30 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
   line-height: 1;
   cursor: help;
   vertical-align: 1px;
-  flex: 0 0 auto;
   transition: color .12s, border-color .12s;
 }
-.tip:hover, .tip:focus-visible {
+/* Подсказка раскрывается по наведению на весь блок: .tip-body лежит рядом
+   с кружком, а не внутри него, поэтому селектор должен быть от .tip-wrap.
+   С кругом он не срабатывал никогда — подсказки просто не появлялись. */
+.tip-wrap:hover .tip, .tip-wrap:focus-visible .tip {
   color: var(--accent);
   border-color: var(--accent);
   outline: none;
 }
 .tip-wrap { position: relative; display: inline-flex; align-items: center; }
+/* Мост между кружком и карточкой. Без него указатель, идя от «?» к тексту,
+   проходит через 8-пиксельный зазор: :hover на .tip-wrap теряется, карточка
+   гаснет и на текст уже нельзя навести — ровно то поведение, из-за которого
+   подсказки кажутся «неработающими». Псевдоэлемент остаётся частью
+   .tip-wrap, поэтому наведение на него не разрывает hover. */
+.tip-wrap::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 10px;
+}
 
 .tip-body {
   position: absolute;
@@ -192,14 +213,24 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
   letter-spacing: normal;
   font-weight: 400;
 }
-.tip:hover .tip-body, .tip:focus-visible .tip-body {
+.tip-wrap:hover .tip-body,
+.tip-wrap:focus-visible .tip-body,
+.tip-wrap:focus-within .tip-body {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
 .tip-body b { color: var(--accent); }
 /* Подсказка у правого края экрана не должна уезжать за вьюпорт */
 .tip-wrap.right .tip-body { left: auto; right: -8px; transform: translateY(3px); }
-.tip-wrap.right:hover .tip-body, .tip-wrap.right:focus-visible .tip-body { transform: translateY(0); }
+.tip-wrap.right:hover .tip-body,
+.tip-wrap.right:focus-visible .tip-body,
+.tip-wrap.right:focus-within .tip-body { transform: translateY(0); }
+
+/* По клику тоже: на тач-устройствах и на трекпадах наведения нет.
+   Клик переклюляет класс, который держит подсказку открытой. */
+.tip-wrap.open .tip-body { opacity: 1; transform: translateX(-50%) translateY(0); }
+.tip-wrap.right.open .tip-body { transform: translateY(0); }
+
 .opt input { margin-top: 3px; accent-color: var(--accent); }
 .opt .t { font-weight: 600; }
 /* Метрика, занятая под гвардрайл: её нельзя взять основной */

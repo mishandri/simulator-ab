@@ -79,6 +79,7 @@ async function play({ scenario, metric, mde, share, duration, stopEarly = false,
   // Ждём либо ловушку руководителя, либо остановку из-за SRM, либо конец
   for (let i = 0; i < 100; i++) {
     if (
+      doc().querySelector('#stopSrm') ||
       doc().querySelector('#keepGoing') ||
       doc().querySelector('#stopNow') ||
       doc().querySelector('[data-dec]')
@@ -90,7 +91,7 @@ async function play({ scenario, metric, mde, share, duration, stopEarly = false,
 
   const observe = {
     day: (text().match(/Идёт (\d+) из (\d+)/) || []).slice(1).join('/'),
-    srmStopOffered: !!doc().querySelector('#stopNow'),
+    srmStopOffered: !!doc().querySelector('#stopSrm'),
     managerPeek: !!doc().querySelector('#keepGoing'),
     pDashes: doc().querySelectorAll('table td.num').length > 0 && has('—'),
     noteClasses: [...doc().querySelectorAll('.note.bad, .note.warn, .note.good')].map(
@@ -98,9 +99,10 @@ async function play({ scenario, metric, mde, share, duration, stopEarly = false,
     ),
   };
 
-  // При SRM прогон останавливается сам и предлагает только остановку —
-  // нажать «остановить из-за SRM» нужно в любом случае
-  if (doc().querySelector('#stopNow')) click('#stopNow');
+  // У ловушки руководителя и у SRM свои кнопки: #stopNow — досрочная остановка
+  // по воле ученика, #stopSrm — остановка из-за сломанной рандомизации
+  if (doc().querySelector('#stopSrm')) click('#stopSrm');
+  else if (stopEarly && doc().querySelector('#stopNow')) click('#stopNow');
   else if (doc().querySelector('#keepGoing')) click('#keepGoing');
   for (let i = 0; i < 200 && !doc().querySelector('[data-dec]'); i++) await sleep(100);
 
