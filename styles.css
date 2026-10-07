@@ -310,6 +310,20 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
 }
 
 /* ---------- таблицы ---------- */
+/* Таблицы с числовыми колонками на телефоне не помещаются: шапка «Выручка/сессия»
+   плюс четыре числа требуют больше, чем есть в 360px. Раньше таблица шириной 100%
+   растягивала колонки и последние уезжали за край карточки — обрезанный столбец
+   читается как «данных нет», а это худший вид поломки. Теперь таблица сохраняет
+   естественную ширину, а прокручивается контейнер: движением пальца вбок. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -2px;
+}
+/* Ширина по содержимому удерживает колонки от сплющивания на широком экране,
+   где им есть место. На узком экране правило снимается — см. медиазапрос. */
+.table-scroll table { min-width: max-content; }
+
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--line); }
 th:first-child, td:first-child { text-align: left; }
@@ -386,7 +400,29 @@ footer.site { border-top: 1px solid var(--line); margin-top: 40px; padding: 18px
 
 code { font-family: var(--mono); background: var(--bg-3); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
 
+/* Две формы подписи метрики: полная и короткая. Показываем полную по умолчанию,
+   короткую переключает медиазапрос ниже. Правило обязано стоять ДО медиазапроса:
+   при равной специфичности побеждает последнее, и объявленное после правило
+   тихо отменило бы переключение на телефоне. */
+.wide { display: inline; }
+.narrow { display: none; }
+
 @media (max-width: 640px) {
   .grid2 { grid-template-columns: 1fr; }
   .stepper .st { min-width: 68px; font-size: 11.5px; }
+
+  /* Подобрано под 360px: пять колонок с числами занимают там всю ширину
+     ровно, без горизонтальной прокрутки. Числа пришлось ужать до 12px —
+     иначе таблица шага 4 шире экрана на 100px. */
+  .table-scroll table { min-width: 0; }
+  table { font-size: 12px; }
+  th, td { padding: 7px 3px; overflow-wrap: break-word; }
+  th { font-size: 10px; letter-spacing: 0; }
+  .card { padding: 14px 12px; }
+  .kpi { font-size: 13.5px; }
+
+  /* Короткая форма подписи: «Выручка на сессию (ARPU)» занимала 140px
+     и выдавливала колонки с числами за край экрана. */
+  .wide { display: none; }
+  .narrow { display: inline; }
 }

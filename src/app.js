@@ -1452,19 +1452,28 @@ const total = state.sim.days.length;
       </div>
 
       <h3>Текущие цифры</h3>
+      <div class="table-scroll">
       <table>
         <tr><th>Метрика</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th><th class="num">p</th></tr>
         ${metricRow('ctr', snap, state.primary === 'ctr', srm)}
         ${metricRow('conversion', snap, state.primary === 'conversion', srm)}
         ${metricRow('arpu', snap, state.primary === 'arpu', srm)}
         <tr>
-          <td>Распределение трафика (SRM)${tip(GLOSSARY.srm.title, GLOSSARY.srm.body, ' right')}</td>
+          <td><span class="wide">Распределение трафика (SRM)</span
+            ><span class="narrow">Трафик, SRM</span>${tip(
+      GLOSSARY.srm.title,
+      GLOSSARY.srm.body,
+      ' right'
+    )}</td>
           <td class="num">${pct(1 - snap.shareB, 1)}</td>
           <td class="num">${pct(snap.shareB, 1)}</td>
           <td class="num ${srm ? 'neg' : 'muted'}">χ²=${snap.srm.chi2.toFixed(2)}</td>
-          <td class="num ${srm ? 'neg' : 'muted'}">${srm ? 'нарушение' : 'ок'}</td>
+          <td class="num ${srm ? 'neg' : 'muted'}"><span class="wide">${
+            srm ? 'нарушение' : 'ок'
+          }</span><span class="narrow">${srm ? '✕' : 'ок'}</span></td>
         </tr>
       </table>
+      </div>
       ${srm ? '<p class="muted" style="font-size:13px">Ожидалось по настройке: A — ' +
         `${pct(1 - state.shareB, 1)}, B — ${pct(state.shareB, 1)}.</p>` : ''}
         ${
@@ -1571,10 +1580,22 @@ function metricRow(metricId, snap, isPrimary, srm = false) {
   const valA = isMean ? res.meanA : res.pa;
   const valB = isMean ? res.meanB : res.pb;
   const dim = srm ? ' style="opacity:.45"' : '';
+  // На телефоне длинная подпись съедает всю ширину таблицы, поэтому у метрик
+  // есть короткая форма: «Выручка на сессию (ARPU)» → «Выручка, сессия».
+  const short = METRICS[metricId].shortLabel;
+  const name = short
+    ? `<span class="wide">${escapeHtml(METRICS[metricId].label)}</span
+        ><span class="narrow">${escapeHtml(short)}</span>`
+    : escapeHtml(METRICS[metricId].label);
+  // Пометки в узкой колонке. На телефоне длинное «недействительно» отжимало
+  // колонки с числами за край: строка и так приглушена, p-value заменён на «—»,
+  // а под таблицей висит пояснение про SRM — поэтому хватает знака.
+  const tagPrimary = isPrimary ? ' <span class="tag"><span class="wide">основная</span><span class="narrow">осн.</span></span>' : '';
+  const tagInvalid = srm
+    ? ' <span class="tag warn" title="При SRM метрика недостоверна"><span class="wide">недействительно</span><span class="narrow">✕</span></span>'
+    : '';
   return `<tr${isPrimary ? ' class="hl"' : ''}${dim}>
-          <td>${escapeHtml(METRICS[metricId].label)}${isPrimary ? ' — основная' : ''}${
-    srm ? ' <span class="tag warn">недействительно</span>' : ''
-  }</td>
+          <td>${name}${tagPrimary}${tagInvalid}</td>
           <td class="num">${fmt(valA)}</td>
           <td class="num">${fmt(valB)}</td>
           <td class="num ${cls(res.relLift)}">${signed(res.relLift)}</td>
@@ -1743,6 +1764,7 @@ function screenDecision() {
 
 function resultTable(scenario, snap) {
   return `
+    <div class="table-scroll">
     <table>
       <tr><th>Вариант</th><th class="num">Трафик</th><th class="num">Покупки</th>
       <th class="num">Конверсия</th><th class="num">Выручка/сессия</th></tr>
@@ -1765,7 +1787,8 @@ function resultTable(scenario, snap) {
         <td class="num ${cls(snap.conv.relLift)}">${signed(snap.conv.relLift)}</td>
         <td class="num ${cls(snap.arpu.relLift)}">${signed(snap.arpu.relLift)}</td>
       </tr>
-    </table>`;
+    </table>
+    </div>`;
 }
 
 function wireDecision() {
@@ -1859,6 +1882,7 @@ function screenDebrief() {
              описание поломки.</div>`
           : ''
       }
+      <div class="table-scroll">
       <table>
         <tr><td>CTR: A → B</td>
         <td class="num">${pct(finalSnap.ctr.pa)} → ${pct(finalSnap.ctr.pb)}
@@ -1884,6 +1908,7 @@ function screenDebrief() {
             : `χ² = ${finalSnap.srm.chi2.toFixed(2)}, p ${formatPExpr(finalSnap.srm.pValue)} — ок`
         }</td></tr>
       </table>
+      </div>
       ${
         // Подсказка имеет смысл, только когда прокси-метрика выросла заметно
         // сильнее бизнес-метрики: иначе обе метрики просто неудачны
