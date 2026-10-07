@@ -65,6 +65,12 @@ nav.top a:hover { color: var(--fg); }
 }
 .stepper .st.done { color: var(--fg-dim); border-color: #24405c; }
 .stepper .st.now { color: var(--fg); border-color: var(--accent); background: #12243a; font-weight: 600; }
+.stepper .st.todo { color: #4a5561; border-color: #1f262f; }
+/* Возврат назад: курсор и подсветка только у доступных шагов */
+.stepper .st.back { cursor: pointer; user-select: none; }
+.stepper .st.back:hover { border-color: var(--accent); color: var(--fg); background: #12243a; }
+.stepper .st.back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.stepper .st.now { cursor: default; }
 
 /* ---------- карточки ---------- */
 .card {
@@ -190,6 +196,11 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
 .hypo.h1 { border-left-color: var(--accent); }
 .hypo p { margin: 8px 0 6px; color: var(--fg); font-size: 14px; }
 .hypo .b { font-size: 13px; color: var(--fg-dim); }
+/* Сетка ориентиров: четыре короткие карточки в два ряда */
+.hypo-pair.compact { grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 14px; }
+.hypo-pair.compact .hypo { padding: 10px 12px; border-left-width: 3px; }
+.hypo-pair.compact .hypo .tag { display: inline-block; margin-bottom: 4px; }
+.hypo-pair.compact .hypo p { margin: 2px 0 0; font-size: 13px; color: var(--fg-dim); }
 
 @media (max-width: 640px) {
   .hypo-pair { grid-template-columns: 1fr; }
