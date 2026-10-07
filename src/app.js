@@ -17,6 +17,7 @@ import {
   mdeForProportion,
   powerForProportion,
   durationDays,
+  zCritical,
   formatP,
   formatPExpr,
 } from './stats.js';
@@ -38,6 +39,19 @@ function powerOk(p) {
 /** Мощность с точностью, достаточной чтобы не спорить с округлением. */
 function powerText(p) {
   return powerOk(p) ? pct(p, 1) : pct(p, 2);
+}
+
+/**
+ * Срок человеческим языком. При эффектах меньше процента нужный срок исчисляется
+ * годами: «4370 дней» читается как ошибка в расчёте, а «12 лет» — как вывод.
+ */
+function humanDays(d) {
+  if (!Number.isFinite(d)) return 'столько, что срок не имеет смысла';
+  if (d <= 120) return days(d);
+  const months = Math.round((d / 30.44) * 10) / 10;
+  if (months < 24) return `около ${months} ${plural(months, ['месяца', 'месяцев', 'месяцев'])}`;
+  const years = Math.round((d / 365) * 10) / 10;
+  return `около ${years} ${plural(years, ['года', 'лет', 'лет'])}`;
 }
 /**
  * Минимальный срок теста и шаг его изменения. Срок задаём кратным недели:
@@ -381,20 +395,21 @@ function design() {
   // Крупнейший MDE, который тест надёжно различает (мощность ровно 80%)
   const mdeAchievable = mdeForProportion(baseline, actualSample, POWER_TARGET, state.alpha);
 
-  /**
+  /*
    * Сколько дней нужно, чтобы поймать ИМЕННО ТИПИЧНЫЙ эффект с целевой мощностью.
    * Это другой вопрос, чем «сколько нужно под заявленный MDE»: мощность зависит
    * от объёма данных и размера эффекта, а вовсе не от объявленного порога.
-   * Типичный эффект пересчитываем под каждый кандидат — он зависит от срока.
+   *
+   * Считаем напрямую через размер выборки, а не перебором сроков: при эффекте
+   * меньше процента перебор упирался бы в потолок и давал «нужно Infinity дней»
+   * вместо конкретного числа. sampleSizeProportion решает ровно ту же задачу,
+   * что и powerForProportion с обратной стороны.
    */
-  let daysForTruePower = Infinity;
-  for (let cand = MIN_DAYS; cand <= MAX_DAYS * 3; cand += WEEK) {
-    const mdeAtCand = Math.abs(realizedConversionLift(scenario, cand));
-    if (powerOk(powerForProportion(baseline, mdeAtCand, bottleneck * cand, state.alpha))) {
-      daysForTruePower = cand;
-      break;
-    }
-  }
+  const sampleForTrue = sampleSizeProportion(baseline, trueMde, POWER_TARGET, state.alpha);
+  // Непрерывный срок: sampleSizeProportion округляет вверх до целого, и при
+  // эффекте меньше процента округление давало разброс в десятки тысяч дней.
+  // Делим и округляем до кратного неделе один раз, в конце.
+  const daysForTruePower = Math.max(WEEK, Math.ceil(sampleForTrue / bottleneck / WEEK) * WEEK);
   const maxSample = bottleneck * MAX_DAYS;
   const powerAtMax = powerForProportion(
     baseline,
@@ -407,6 +422,7 @@ function design() {
     baseline,
     duration,
     trueMde,
+    sampleForTrue,
     perVariant,
     bottleneck,
     need,
@@ -671,10 +687,9 @@ function durationHint(d) {
     ])} (${days(d.daysRecommended)}).</b> Под MDE ${pct(state.mde, 1)} нужно ${num(d.need)}
       наблюдений на вариант — это ${days(d.daysForSample)}, а вы держите тест ${days(chosen)}.
       Не хватает ${num(d.need - d.actualSample)} наблюдений. За ${days(d.daysRecommended)}
-      типичный эффект ${pct(d.trueMde, 1)} будет пойман с мощностью ${pct(
-      d.powerOnTrueAtRecommended,
-      0
-    )}.</div>`;
+      типичный эффект ${pct(d.trueMde, 1)} был бы пойман с мощностью ${powerText(
+        powerForProportion(d.baseline, d.trueMde, d.bottleneck * d.daysRecommended, state.alpha)
+      )}.</div>`;
   }
 
   if (chosen > d.daysRecommended + WEEK) {
@@ -686,17 +701,19 @@ function durationHint(d) {
       Держите тест дольше только ради устойчивости к выбросам.</div>`;
   }
 
-  const residual = !powerOk(d.powerOnTrue)
-    ? ` Но типичный эффект около ${pct(d.trueMde, 1)} этот срок поймает лишь с вероятностью
-       ${powerText(d.powerOnTrue)} — это красный вывод ниже. Срок достаточен по вашему MDE,
-       но не по реальному эффекту.`
+  // Если типичный эффект меньше различимого, подсказка зелёная по вашему MDE,
+  // но произносить оба числа подряд («срок достаточен… и вот 4.45%») сбивает с толку
+  const onTrue = powerOk(d.powerOnTrue);
+  const tail = onTrue
+    ? ` Типичный эффект ${pct(d.trueMde, 1)} будет пойман с мощностью ${powerText(
+        d.powerOnTrue
+      )}.`
     : '';
 
   return `<div class="hint ok"><b>✓ По вашему MDE срок достаточен.</b> ${days(chosen)} — кратно полной
       неделе, и данных хватает на порог ${pct(state.mde, 1)} (нужно ${days(d.daysForSample)}).
       Наберётся ${num(d.actualSample)} наблюдений на вариант, надёжно различимый эффект —
-      ${pct(d.mdeAchievable, 1)}; типичный эффект ${pct(d.trueMde, 1)} будет пойман
-      с мощностью ${powerText(d.powerOnTrue)}.${residual}</div>`;
+      ${pct(d.mdeAchievable, 1)}.${tail} Подробнее о типичном эффекте — в выводе ниже.</div>`;
 }
 
 function screenDesign() {
@@ -878,14 +895,22 @@ function designWarnings() {
   }
 
   if (state.mde > trueMde * 2) {
+    // Эффект либо поймается, либо нет: если мощность на него низкая, планку
+    // MDE это не спасёт — и обещать «p-value будет крошечным» было бы враньём
+    const catchable = powerOk(d.powerOnTrue);
     out.push(
       `<div class="note warn"><b>MDE ${pct(state.mde, 1)} — выше типичного эффекта
       (около ${pct(trueMde, 1)}).</b> Формула тут ни при чём: под ваш заявленный порог данных хватает
-      с запасом (мощность ${pct(d.powerAtChosen, 0)}). Проблема в решении. Если реальный эффект
-      окажется ${pct(trueMde, 1)}, p-value будет крошечным — изменение статистически значимо,
-      но не проходит вашу же планку в ${pct(state.mde, 1)}, и его сворачивают.
-      Либо, если данных не хватит, вы честно не заметите эффект и сделаете вывод «изменений нет»,
-      хотя он есть.
+      с запасом (мощность ${pct(d.powerAtChosen, 0)}). Проблема в решении.
+      ${
+        catchable
+          ? `Если реальный эффект окажется ${pct(trueMde, 1)}, p-value будет крошечным —
+             изменение статистически значимо, но не проходит вашу же планку в
+             ${pct(state.mde, 1)}, и его сворачивают.`
+          : `Но этот тест типичный эффект в ${pct(trueMde, 1)} вообще не поймает — мощность
+             всего ${powerText(d.powerOnTrue)}. Вы увидите «разницы нет» и сделаете вывод, что
+             изменение не работает, хотя вопрос просто не адресован этим объёмом данных.`
+      }
       <br><br>Заявленный MDE — это обещание, зафиксированное <b>до</b> старта. Двигать его после
       того, как данные посмотрены, — самая дорогая ошибка в A/B-тестировании.</div>`
     );
@@ -912,10 +937,11 @@ function designWarnings() {
              измеряется ненадёжно, и это тоже результат.`
           : `<br><br><b>Потолок ползунка.</b> Даже на максимальных ${MAX_DAYS} дней мощность
              составит ${powerText(d.powerAtMax)}, а для целевых ${pct(POWER_TARGET, 0)} нужно
-             ${days(d.daysForTruePower)}. На этом трафике эффект ${pct(
-              trueMde,
-              1
-            )} принципиально не измерить — увеличивайте трафик или признайте это ограничение.`
+             примерно ${num(d.sampleForTrue)} наблюдений на вариант — при вашем трафике
+             ${num(d.perVariant.B)} в день это ${humanDays(
+               Math.round(d.sampleForTrue / d.perVariant.B)
+             )} непрерывного теста. Эффект ${pct(trueMde, 1)} на таком объёме измерить
+             нельзя — нужен качественно другой трафик, а не «ещё чуть-чуть подольше».`
       }
       <br><br><b>Поднять MDE здесь не поможет.</b> Мощность зависит от объёма данных и размера
       эффекта, а не от объявленного порога: чем крупнее MDE, тем меньше данных нужно под
