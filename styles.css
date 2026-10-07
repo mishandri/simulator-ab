@@ -128,6 +128,78 @@ button.danger:hover:not(:disabled) { border-color: var(--bad); }
 }
 .opt:hover { border-color: #3d5f85; }
 .opt.sel { border-color: var(--accent); background: #12243a; }
+/* Метрика, которой нет в симуляции: не выбирается и не выглядит доступной */
+.opt.off {
+  opacity: .55;
+  cursor: not-allowed;
+  border-style: dashed;
+  background: transparent;
+}
+.opt.off:hover { border-color: var(--line); }
+.opt .t .tag.off {
+  border-color: var(--fg-faint);
+  color: var(--fg-faint);
+  margin-left: 8px;
+  font-size: 10.5px;
+  vertical-align: 1px;
+}
+
+/* ---------- всплывающие подсказки ---------- */
+.tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 6px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 1;
+  cursor: help;
+  vertical-align: 1px;
+  flex: 0 0 auto;
+  transition: color .12s, border-color .12s;
+}
+.tip:hover, .tip:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+.tip-wrap { position: relative; display: inline-flex; align-items: center; }
+
+.tip-body {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  width: 280px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b0f14;
+  color: var(--fg);
+  font-size: 12.5px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .14s ease, transform .14s ease;
+  z-index: 60;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+.tip:hover .tip-body, .tip:focus-visible .tip-body {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.tip-body b { color: var(--accent); }
+/* Подсказка у правого края экрана не должна уезжать за вьюпорт */
+.tip-wrap.right .tip-body { left: auto; right: -8px; transform: translateY(3px); }
+.tip-wrap.right:hover .tip-body, .tip-wrap.right:focus-visible .tip-body { transform: translateY(0); }
 .opt input { margin-top: 3px; accent-color: var(--accent); }
 .opt .t { font-weight: 600; }
 /* Метрика, занятая под гвардрайл: её нельзя взять основной */

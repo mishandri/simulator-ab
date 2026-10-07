@@ -136,6 +136,89 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
+/**
+ * Всплывающая подсказка для новичка.
+ * `align` — сторона, к которой прижимать карточку у края экрана.
+ */
+function tip(title, body, align = '') {
+  return `<span class="tip-wrap ${align}" tabindex="0" role="note" aria-label="${escapeHtml(title)}">
+      <span class="tip" aria-hidden="true">?</span>
+      <span class="tip-body"><b>${escapeHtml(title)}.</b> ${body}</span>
+    </span>`;
+}
+
+/** Словарь подсказок: термин → объяснение. */
+const GLOSSARY = {
+  mde: {
+    title: 'MDE — минимальный детектируемый эффект',
+    body: `Наименьшее изменение, ради которого стоит запускать тест. Объявляется <b>до старта</b>
+      и превращается в обязательный порог: «эффект меньше ${'X'}% нас не интересует».
+      Чем мельче MDE, тем больше данных нужно — объём растёт как 1/MDE², то есть
+      уменьшение порога вдвое стоит примерно вчетверо дороже.`,
+  },
+  power: {
+    title: 'Мощность — вероятность поймать эффект',
+    body: `Допустим, эффект ровно такой, как мы ищем. Насколько часто тест его обнаружит?
+      80% означает: в 8 случаях из 10 мы действительно увидим изменение, а не шум.
+      Низкая мощность — типичная причина ложного вывода «изменений нет».`,
+  },
+  alpha: {
+    title: 'α — уровень значимости',
+    body: `Порог допустимой вероятности ошибиться: «считать разницу значимой, если она
+      случайно возникла с вероятностью не больше ${'α'}». При α = 0.05 примерно каждый
+      двадцатый «выигранный» тест оказывается ложным.`,
+  },
+  traffic: {
+    title: 'Доля трафика на вариант B',
+    body: `Какую часть посетителей видит вариант B. 50/50 — стандарт: оба варианта получают
+      максимум данных, тест заканчивается быстрее. Отступление вниз допустимо ради
+      безопасности, но замедляет тест.`,
+  },
+  duration: {
+    title: 'Срок теста',
+    body: `Сколько дней работает эксперимент. Данных набирается тем больше, чем дольше
+      он идёт. Срок кратен неделе, чтобы перекрыть недельную цикличность трафика.
+      Останавливать тест досрочно, увидев красивое p-value, — ловушка подглядывания.`,
+  },
+  guardrail: {
+    title: 'Гвардрейл',
+    body: `Метрика, которую нельзя сломать: конверсия, стабильность, доля отказов.
+      Основная метрика может расти, а гвардрейл падает — и тогда выкатка
+      блокируется, какой бы красивый ни был основной результат. Основная и гвардрейл
+      обязаны быть <b>разными</b> метриками.`,
+  },
+  srm: {
+    title: 'SRM — несовпадение долей трафика',
+    body: `Если реальные доли посетителей разошлись с задуманными (не 50/50, а, скажем,
+      42/58), группы собраны из разных людей — и сравнивать метрики бессмысленно.
+      Первая проверка в мониторинге, до чтения результатов.`,
+  },
+  proxy: {
+    title: 'Прокси-метрика',
+    body: `Показатель рядом с настоящей целью: клики, показы, время на сайте. Растёт легко,
+      но может сопровождать падение бизнеса. Решение о выкатке принимают по деньгам,
+      прокси — только как сигнал, что стоит копать дальше.`,
+  },
+  ci: {
+    title: 'Доверительный интервал',
+    body: `Диапазон, в котором лежит настоящая разница с заданной уверенностью (обычно 95%).
+      Интервал пересекает ноль — значит, данные не позволяют отличить эффект от шума.
+      Это честнее, чем судить по одной цифре p-value.`,
+  },
+  peeking: {
+    title: 'Подглядывание',
+    body: `Проверять результат несколько раз до конца теста. Каждая такая проверка —
+      дополнительная попытка поймать шум, и именно она порождает ложные открытия.
+      Срок и объём выборки фиксируют заранее, а решение принимают один раз.`,
+  },
+  timeOnSite: {
+    title: 'Почему «Время на сайте» недоступно',
+    body: `Метрику нужно моделировать: генерировать время каждого посетителя и считать
+      среднее. Без этого подписи в таблице показывали бы данные конверсии, а
+      p-value считался бы для долей вместо средних. Честнее не показывать вовсе.`,
+  },
+};
+
 // ============================================================ статистика по срезу
 
 /** Полный срез эксперимента по первым `days` дням. */
@@ -643,16 +726,28 @@ function screenMetric() {
   // решающий узнаёт при согласовании дизайна. Ошибку в выборе разбираем позже —
   // на шаге решения, вместе с возможностью вернуться и исправить.
   const opts = Object.values(METRICS)
-    .map(
-      (m) => `
+    .map((m) => {
+      // Не смоделированную метрику нельзя выбрать: иначе под её названием
+      // оказались бы данные другой метрики
+      if (m.simulated === false) {
+        return `
+      <label class="opt off" title="${escapeHtml(m.unavailable ?? '')}">
+        <input type="radio" name="primary" value="${m.id}" disabled>
+        <span>
+          <span class="t">${escapeHtml(m.label)}<span class="tag off">недоступна</span></span>
+          <span class="d">${escapeHtml(m.unavailable ?? m.hint)}</span>
+        </span>
+      </label>`;
+      }
+      return `
       <label class="opt ${state.primary === m.id ? 'sel' : ''}">
         <input type="radio" name="primary" value="${m.id}" ${state.primary === m.id ? 'checked' : ''}>
         <span>
           <span class="t">${escapeHtml(m.label)}</span>
           <span class="d">${escapeHtml(m.hint)}</span>
         </span>
-      </label>`
-    )
+      </label>`;
+    })
     .join('');
 
   return `
@@ -686,6 +781,10 @@ function screenMetric() {
         </div>
       </div>
       <div class="options">${opts}</div>
+      <p class="muted" style="font-size:13px">Под основной метрикой считается то, что
+      напрямую отвечает на вопрос «принесло ли изменение пользу». Всё, что нельзя сломать,
+      уходит в гвардрейлы.${tip(GLOSSARY.guardrail.title, GLOSSARY.guardrail.body)}
+      ${tip(GLOSSARY.proxy.title, GLOSSARY.proxy.body)}</p>
       <div class="row">
         <button class="primary" id="next2">Спроектировать тест →</button>
       </div>
@@ -861,20 +960,22 @@ function screenDesign() {
 
       <div class="params">
         <label>MDE — минимальный эффект, ради которого стоит запускать тест:
-          <b class="v-label" data-for="mde"></b></label>
+          <b class="v-label" data-for="mde"></b>${tip(GLOSSARY.mde.title, GLOSSARY.mde.body)}</label>
         <input type="range" id="mde" min="0.5" max="30" step="0.5">
         <div data-hint="mde"></div>
 
-        <label>Доля трафика на вариант B: <b class="v-label" data-for="share"></b></label>
+        <label>Доля трафика на вариант B: <b class="v-label" data-for="share"></b>
+          ${tip(GLOSSARY.traffic.title, GLOSSARY.traffic.body)}</label>
         <input type="range" id="share" min="10" max="50" step="5">
         <div data-hint="share"></div>
 
         <label>Длительность теста: <b class="v-label" data-for="duration"></b>
-          <span class="muted">(кратно ${WEEK} дням)</span></label>
+          <span class="muted">(кратно ${WEEK} дням)</span>
+          ${tip(GLOSSARY.duration.title, GLOSSARY.duration.body)}</label>
         <input type="range" id="duration" min="${MIN_DAYS}" max="${MAX_DAYS}" step="${WEEK}">
         <div data-hint="duration"></div>
 
-        <label>Уровень значимости α</label>
+        <label>Уровень значимости α ${tip(GLOSSARY.alpha.title, GLOSSARY.alpha.body)}</label>
         <select id="alpha">
           <option value="0.05">0.05 — стандарт</option>
           <option value="0.01">0.01 — строже, нужно больше данных</option>
@@ -987,9 +1088,9 @@ function realityRows(d, mdePercent) {
     <td class="num">${num(d.actualSample)}</td></tr>
     <tr><td>Нужно под ваш MDE ${mdePercent}%</td>
     <td class="num ${d.actualSample >= d.need ? 'pos' : 'neg'}">${num(d.need)}</td></tr>
-    <tr class="hl"><td>Мощность на вашем MDE</td>
+    <tr class="hl"><td>Мощность на вашем MDE${tip(GLOSSARY.power.title, GLOSSARY.power.body)}</td>
     <td class="num ${powerOk(d.powerAtChosen) ? 'pos' : 'neg'}">${powerText(d.powerAtChosen)}</td></tr>
-    <tr><td>Типичный эффект в этой задаче (о нём вы не знаете)</td>
+    <tr><td>Типичный эффект в этой задаче</td>
     <td class="num">${pct(d.trueMde, 1)}</td></tr>
     <tr><td>Мощность на типичном эффекте</td>
     <td class="num ${powerOk(d.powerOnTrue) ? 'pos' : 'neg'}">${powerText(d.powerOnTrue)}</td></tr>
@@ -1218,10 +1319,11 @@ const total = state.sim.days.length;
         </div>
         <p style="margin-bottom:0">Соблазн велик: p-value уже на экране, и он выглядит
         убедительно. Но это решение опирается на ${shareText} будущего результата —
-        данные за ${days(peekAt)} из ${total}. Каждая такая проверка в середине теста —
-        дополнительная попытка поймать шум, и именно она порождает ложные открытия.
-        Срок и объём выборки были зафиксированы до старта: дождаться конца стоит
-        бесплатно, а вот пересмотреть план задним числом — нет.</p></div>`
+        данные за ${days(peekAt)} из ${total}.${tip(GLOSSARY.peeking.title, GLOSSARY.peeking.body, ' right')}
+        Каждая такая проверка в середине теста — дополнительная попытка поймать шум,
+        и именно она порождает ложные открытия. Срок и объём выборки были
+        зафиксированы до старта: дождаться конца стоит бесплатно, а вот пересмотреть
+        план задним числом — нет.</p></div>`
     : '';
 
   return `
@@ -1245,7 +1347,7 @@ const total = state.sim.days.length;
         ${metricRow('conversion', snap, state.primary === 'conversion', srm)}
         ${metricRow('arpu', snap, state.primary === 'arpu', srm)}
         <tr>
-          <td>Распределение трафика (SRM)</td>
+          <td>Распределение трафика (SRM)${tip(GLOSSARY.srm.title, GLOSSARY.srm.body, ' right')}</td>
           <td class="num">${pct(1 - snap.shareB, 1)}</td>
           <td class="num">${pct(snap.shareB, 1)}</td>
           <td class="num ${srm ? 'neg' : 'muted'}">χ²=${snap.srm.chi2.toFixed(2)}</td>
@@ -1473,7 +1575,8 @@ function screenDecision() {
             METRICS[state.primary].label
           )}</span></div>
           <div class="kpi"><span>Изменение</span><span class="v ${cls(res.relLift)}">${signed(res.relLift)}</span></div>
-          <div class="kpi"><span>95% ДИ на Δ</span><span class="v">${pct(res.ci[0])} … ${pct(res.ci[1])}</span></div>
+          <div class="kpi"><span>95% ДИ на Δ${tip(GLOSSARY.ci.title, GLOSSARY.ci.body, ' right')}</span>
+          <span class="v">${pct(res.ci[0])} … ${pct(res.ci[1])}</span></div>
           <div class="kpi"><span>p-value</span><span class="v">${formatP(res.pValue)}</span></div>
           <div class="kpi"><span>Вывод при α = ${state.alpha}</span><span class="v ${
             res.significant ? 'pos' : 'muted'
@@ -1483,7 +1586,11 @@ function screenDecision() {
           <div class="kpi"><span>Выборка A / B</span><span class="v">${num(snap.t.visitors.A)} / ${num(
           snap.t.visitors.B
         )}</span></div>
-          <div class="kpi"><span>Гвардрайл: ${escapeHtml(METRICS[guard.id].label)}</span>
+          <div class="kpi"><span>Гвардрайл: ${escapeHtml(METRICS[guard.id].label)}${tip(
+            GLOSSARY.guardrail.title,
+            GLOSSARY.guardrail.body,
+            ' right'
+          )}</span>
             <span class="v ${guard.broken ? 'neg' : cls(guard.res.relLift)}">${signed(guard.res.relLift)}</span></div>
           <div class="kpi"><span>Гвардрайл p-value</span><span class="v">${formatP(guard.res.pValue)}</span></div>
           <div class="kpi"><span>Порог падения гвардрайла</span>
@@ -1670,6 +1777,13 @@ function screenDebrief() {
       <h3>Ваш чек-лист</h3>
       <div class="issues">${issues.map(issueHtml).join('')}</div>
       ${scenario.teachingNote ? debriefNote(scenario, finalSnap) : ''}
+      <div class="note">
+        <b>Что стоит запомнить.</b>
+        «Изменений нет» и «мы не смогли проверить» — разные выводы.
+        ${tip(GLOSSARY.ci.title, GLOSSARY.ci.body)}
+        ${tip(GLOSSARY.peeking.title, GLOSSARY.peeking.body)}
+        ${tip(GLOSSARY.proxy.title, GLOSSARY.proxy.body)}
+      </div>
       <div class="row">
         <button class="primary" id="restart">Пройти заново</button>
         <button id="other">Другой сценарий</button>
@@ -1678,29 +1792,47 @@ function screenDebrief() {
 }
 
 /** Финальный аккорд для сценариев с заведомо неизмеримым эффектом. */
+/**
+ * Финальный аккорд для сценариев с заведомо неизмеримым эффектом.
+ *
+ * Формулировка зависит от того, что тест показал на самом деле: в кейсе с
+ * поломкой рандомизации p-value недействителен, и говорить «вы получили
+ * p-value около нуля» было бы враньём.
+ */
 function debriefNote(scenario, snap) {
   const d = design();
   const res = primaryResult(scenario, snap);
+  const shortBy = num(1 / Math.max(d.powerOnTrue, 0.001));
+  const needed = `${num(d.sampleForTrue)} наблюдений на вариант — ${humanDays(
+    Math.round(d.sampleForTrue / d.bottleneck)
+  )}`;
+
+  let verdict;
+  if (snap.srm.srm) {
+    verdict = `Данные этого теста недостоверны: доли трафика разошлись, поэтому метрики
+      сравнивать нельзя. О p-value здесь говорить нельзя — он не имеет смысла.`;
+  } else if (res.significant) {
+    verdict = `Формально p-value значимо, и это само по себе выглядит как победа. Но даже
+      <b>правильный</b> вывод «выкатывать» здесь поспешен: объём данных не позволяет
+      отличить настоящий эффект от случайности, значимость получена на грани шума.`;
+  } else {
+    verdict = `p-value около нуля — и это тоже не ответ. Отсутствие значимости при слабой
+      мощности означает «не хватило данных», а не «эффекта нет».`;
+  }
+
   return `<div class="note"><b>Про «разницы нет» в этом сценарии.</b>
-    Вы получили p-value около нуля по выбранной метрике — и правильно не стали выкатывать.
-    Но главное здесь другое: даже <b>правильный</b> вывод «не выкатывать» был бы поспешным.
-    Мощность этого теста на типичный эффект ${pct(d.trueMde, 1)} — всего ${powerText(
-    d.powerOnTrue
-  )}, а для целевых ${pct(POWER_TARGET, 0)} нужно ${num(d.sampleForTrue)} наблюдений
-    на вариант: ${humanDays(Math.round(d.sampleForTrue / d.bottleneck))}.
-    <br><br>По-настоящему честный вывод здесь звучит не «изменение не работает», а
-    <b>«эксперимент не дал ответа: данных примерно в ${num(
-      1 / Math.max(d.powerOnTrue, 0.001)
-    )} раз меньше нужного»</b>. Если эффект около ${pct(
+    ${verdict}
+    <br><br>Главное здесь — мощность. На типичный эффект ${pct(d.trueMde, 1)} она составляет
+    ${powerText(d.powerOnTrue)}, а для целевых ${pct(POWER_TARGET, 0)} нужно ${needed}.
+    Данных примерно в <b>${shortBy} раз</b> меньше нужного.
+    <br><br>По-настоящему честный вывод звучит не «изменение не работает», а
+    <b>«эксперимент не дал ответа»</b>. Если эффект около ${pct(
     d.trueMde,
     1
-  )} существует, ваш тест его просто не видел — и никакой p-value этого не доказывает.
-    ${
-      res.significant
-        ? 'Показательное совпадение: формально p-value и значимо, но это совпадение не отменяет того, что объём данных не подтверждает вывода.'
-        : 'Здесь p-value около нуля и вывод всё равно преждевременный — именно поэтому «не значимо» и «значимо случайно» на таких данных одинаково бесполезны.'
-    }
-    </div>`;
+  )} существует, ваш тест его просто не увидел. Увеличивать трафик в
+    ${shortBy} раз — не разумная цена вопроса; на таких объёмах вывод делают
+    другим способом: длиннее тест, точнее метрика или принципиально признать,
+    что задача неразрешима тестом.</div>`;
 }
 
 /** Какое решение на самом деле следовало принять. */
