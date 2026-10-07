@@ -717,11 +717,13 @@ function durationHint(d) {
 }
 
 function screenDesign() {
+  const scenario = getScenario(state.scenarioId);
   return `
     <div class="card">
       <h2>Шаг 3. Дизайн теста</h2>
       <p class="lead">Сколько данных нужно, чтобы поймать нужный эффект, и сколько это займёт по времени.
       Подсказки под ползунками подсказывают направление — но итоговое решение остаётся за вами.</p>
+      ${scenario.teachingNote ?? ''}
 
       <div class="params">
         <label>MDE — минимальный эффект, ради которого стоит запускать тест:
@@ -1432,6 +1434,11 @@ function screenDebrief() {
         <tr><td>Гвардрайл «выручка на сессию»</td>
         <td class="num ${cls(finalSnap.arpu.relLift)}">${signed(finalSnap.arpu.relLift)}
         (p ${formatPExpr(finalSnap.arpu.pValue)})</td></tr>
+        <tr><td>Мощность теста на типичном эффекте ${pct(
+          Math.abs(realizedConversionLift(scenario, actualDuration())),
+          1
+        )}</td>
+        <td class="num ${powerOk(design().powerOnTrue) ? 'pos' : 'neg'}">${powerText(design().powerOnTrue)}</td></tr>
         <tr><td>Проверка распределения трафика</td>
         <td class="num ${finalSnap.srm.srm ? 'neg' : ''}">${
           finalSnap.srm.srm
@@ -1452,10 +1459,37 @@ function screenDebrief() {
       }
       <h3>Ваш чек-лист</h3>
       <div class="issues">${issues.map(issueHtml).join('')}</div>
+      ${scenario.teachingNote ? debriefNote(scenario, finalSnap) : ''}
       <div class="row">
         <button class="primary" id="restart">Пройти заново</button>
         <button id="other">Другой сценарий</button>
       </div>
+    </div>`;
+}
+
+/** Финальный аккорд для сценариев с заведомо неизмеримым эффектом. */
+function debriefNote(scenario, snap) {
+  const d = design();
+  const res = primaryResult(scenario, snap);
+  return `<div class="note"><b>Про «разницы нет» в этом сценарии.</b>
+    Вы получили p-value около нуля по выбранной метрике — и правильно не стали выкатывать.
+    Но главное здесь другое: даже <b>правильный</b> вывод «не выкатывать» был бы поспешным.
+    Мощность этого теста на типичный эффект ${pct(d.trueMde, 1)} — всего ${powerText(
+    d.powerOnTrue
+  )}, а для целевых ${pct(POWER_TARGET, 0)} нужно ${num(d.sampleForTrue)} наблюдений
+    на вариант: ${humanDays(Math.round(d.sampleForTrue / d.bottleneck))}.
+    <br><br>По-настоящему честный вывод здесь звучит не «изменение не работает», а
+    <b>«эксперимент не дал ответа: данных примерно в ${num(
+      1 / Math.max(d.powerOnTrue, 0.001)
+    )} раз меньше нужного»</b>. Если эффект около ${pct(
+    d.trueMde,
+    1
+  )} существует, ваш тест его просто не видел — и никакой p-value этого не доказывает.
+    ${
+      res.significant
+        ? 'Показательное совпадение: формально p-value и значимо, но это совпадение не отменяет того, что объём данных не подтверждает вывода.'
+        : 'Здесь p-value около нуля и вывод всё равно преждевременный — именно поэтому «не значимо» и «значимо случайно» на таких данных одинаково бесполезны.'
+    }
     </div>`;
 }
 
@@ -1542,9 +1576,9 @@ function collectIssues(scenario, snap, expected) {
       type: 'err',
       h: `MDE завышен в ${(state.mde / trueMde).toFixed(1)} раза`,
       b: `Вы объявили порог ${pct(state.mde, 1)}, а типичный эффект здесь около ${pct(trueMde, 1)}.
-        Тест закончен формально (под заявленный MDE мощность ${pct(d.powerAtNeeded, 0)}), но настоящий
-        эффект он заметил бы лишь с вероятностью ${pct(d.powerOnTrue, 0)}. Такой тест не имеет права
-        делать вывод «эффекта нет» — он просто его не видел.`,
+        Под ваш порог тест закончен формально (мощность ${powerText(d.powerAtChosen)}), но настоящий
+        эффект такой величины он заметил бы лишь с вероятностью ${powerText(d.powerOnTrue)}.
+        Такой тест не имеет права делать вывод «эффекта нет» — он просто его не видел.`,
     });
   } else if (state.mde < trueMde / 3) {
     out.push({
