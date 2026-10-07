@@ -105,7 +105,8 @@ GitHub Pages при пуше в `main`.
 
 Включить: **Settings → Pages → Source → GitHub Actions**.
 
-Сайт будет доступен по адресу `https://<user>.github.io/<repo>/`.
+Живой адрес: **https://mishandri.github.io/simulator-ab/**
+
 Для красоты ссылку можно перенаправить на свой домен в `CNAME`.
 
 ## Структура
